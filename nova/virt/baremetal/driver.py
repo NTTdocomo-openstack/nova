@@ -197,39 +197,44 @@ class BareMetalDriver(driver.ComputeDriver):
         if node['instance_uuid']:
             raise NodeInUse(nodename=nodename, instance_uuid=instance['uuid'])
 
-        _update_baremetal_state(context, node, instance,
-                                baremetal_states.BUILDING)
-
-        var = self.baremetal_nodes.define_vars(instance, network_info,
-                                               block_device_info)
-
-        self._plug_vifs(instance, network_info, context=context)
-
-        self._firewall_driver.setup_basic_filtering(instance, network_info)
-        self._firewall_driver.prepare_instance_filter(instance, network_info)
-
-        self.baremetal_nodes.create_image(var, context, image_meta, node,
-                                          instance,
-                                          injected_files=injected_files,
-                                          admin_password=admin_password)
-        self.baremetal_nodes.activate_bootloader(var, context, node,
-                                                 instance, image_meta)
-        pm = get_power_manager(node)
-        state = pm.activate_node()
-
-        _update_baremetal_state(context, node, instance, state)
-
-        self.baremetal_nodes.activate_node(var, context, node, instance)
-        self._firewall_driver.apply_instance_filter(instance, network_info)
-
-        block_device_mapping = driver.block_device_info_get_mapping(
-            block_device_info)
-        for vol in block_device_mapping:
-            connection_info = vol['connection_info']
-            mountpoint = vol['mount_device']
-            self.attach_volume(connection_info, instance['name'], mountpoint)
-
-        pm.start_console()
+        try:
+            _update_baremetal_state(context, node, instance,
+                                    baremetal_states.BUILDING)
+    
+            var = self.baremetal_nodes.define_vars(instance, network_info,
+                                                   block_device_info)
+    
+            self._plug_vifs(instance, network_info, context=context)
+    
+            self._firewall_driver.setup_basic_filtering(instance, network_info)
+            self._firewall_driver.prepare_instance_filter(instance, network_info)
+    
+            self.baremetal_nodes.create_image(var, context, image_meta, node,
+                                              instance,
+                                              injected_files=injected_files,
+                                              admin_password=admin_password)
+            self.baremetal_nodes.activate_bootloader(var, context, node,
+                                                     instance, image_meta)
+            pm = get_power_manager(node)
+            state = pm.activate_node()
+    
+            _update_baremetal_state(context, node, instance, state)
+    
+            self.baremetal_nodes.activate_node(var, context, node, instance)
+            self._firewall_driver.apply_instance_filter(instance, network_info)
+    
+            block_device_mapping = driver.block_device_info_get_mapping(
+                block_device_info)
+            for vol in block_device_mapping:
+                connection_info = vol['connection_info']
+                mountpoint = vol['mount_device']
+                self.attach_volume(connection_info, instance['name'], mountpoint)
+    
+            pm.start_console()
+        except Exception:
+            _update_baremetal_state(context, node, instance,
+                                    baremetal_states.ERROR)
+            raise
 
     def reboot(self, instance, network_info, reboot_type,
                block_device_info=None):
