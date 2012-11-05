@@ -167,7 +167,7 @@ class Ipmi(object):
 
     def reboot_node(self):
         self._power("off")
-        state = self._power_on("on")
+        state = self._power("on")
         return state
 
     def deactivate_node(self):
