@@ -42,7 +42,7 @@ class Fake(object):
     def destroy_images(self, var, context, node, instance):
         pass
 
-    def activate_bootloader(self, var, context, node, instance):
+    def activate_bootloader(self, var, context, node, instance, image_meta):
         pass
 
     def deactivate_bootloader(self, var, context, node, instance):

@@ -113,7 +113,7 @@ class BaremetalDriverSpawnTestCase(test.TestCase):
         self.network_info = test_utils.get_test_network_info()
         self.block_device_info = None
         self.image_meta = test_utils.get_test_image_info(None, self.instance)
-        self.driver = bm_driver.BareMetalDriver()
+        self.driver = bm_driver.BareMetalDriver(None)
         self.kwargs = dict(
                 context=self.context,
                 instance=self.instance,
@@ -184,7 +184,7 @@ class BaremetalDriverTestCase(test_virt_drivers._VirtDriverTestCase):
 
     def test_loading_baremetal_drivers(self):
         from nova.virt.baremetal import fake
-        drv = bm_driver.BareMetalDriver()
+        drv = bm_driver.BareMetalDriver(None)
         self.assertTrue(isinstance(drv.baremetal_nodes, fake.Fake))
         self.assertTrue(isinstance(drv._vif_driver, FakeVifDriver))
         self.assertTrue(isinstance(drv._firewall_driver, FakeFirewallDriver))
@@ -194,7 +194,7 @@ class BaremetalDriverTestCase(test_virt_drivers._VirtDriverTestCase):
         self.flags(instance_type_extra_specs=['cpu_arch:x86_64',
                                               'x:123',
                                               'y:456', ])
-        drv = bm_driver.BareMetalDriver()
+        drv = bm_driver.BareMetalDriver(None)
         cap_list = drv.get_host_stats()
         self.assertTrue(isinstance(cap_list, list))
         self.assertEqual(len(cap_list), 1)

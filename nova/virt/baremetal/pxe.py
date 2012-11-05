@@ -381,6 +381,14 @@ class PXE(object):
         name = "01-" + node['prov_mac_address'].replace(":", "-").lower()
         return name
 
+    def _get_deploy_aki_id(self, image_meta):
+        props = image_meta.get('properties', {})
+        return props.get('deploy_kernel_id', FLAGS.baremetal_deploy_kernel)
+
+    def _get_deploy_ari_id(self, image_meta):
+        props = image_meta.get('properties', {})
+        return props.get('deploy_ramdisk_id', FLAGS.baremetal_deploy_ramdisk)
+
     def _put_tftp_images(self, context, instance, image_meta, tftp_root):
         def _cache_image(image_id, target):
             LOG.debug("fetching id=%s target=%s", image_id, target)
@@ -396,14 +404,11 @@ class PXE(object):
         except KeyError as e:
             raise exception.NovaException(_('Can not activate baremetal '
                         'bootloader, %s is not defined') % e)
-        props = image_meta.get('properties', {})
-        deploy_aki_id = str(props.get('deploy_kernel_id',
-                                      FLAGS.baremetal_deploy_kernel))
+        deploy_aki_id = self._get_deploy_aki_id(image_meta)
         if not deploy_aki_id:
             raise exception.NovaException(_('Can not activate baremetal '
                         'bootloader, %s is not defined') % 'deploy_kernel_id')
-        deploy_ari_id = str(props.get('deploy_ramdisk_id',
-                                      FLAGS.baremetal_deploy_ramdisk))
+        deploy_ari_id = self._get_deploy_ari_id(image_meta)
         if not deploy_ari_id:
             raise exception.NovaException(_('Can not activate baremetal '
                         'bootloader, %s is not defined') % 'deploy_ramdisk_id')

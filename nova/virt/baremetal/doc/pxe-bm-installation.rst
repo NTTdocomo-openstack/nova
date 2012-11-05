@@ -163,7 +163,8 @@ Set these flags in nova.conf::
 Deplyment Kernel/RAMDisk per Image
 ----------------------------------
 
-You can also specify a deploymant kernel/ramdisk by Glance's properties; deploy_kernel_id and deploy_ramdisk_id. These properties take precidence over ones in nove.conf.
+You can also specify a deploymant kernel/ramdisk by Glance's properties;
+deploy_kernel_id and deploy_ramdisk_id. These properties take precidence over ones in nova.conf.
 
 Example: set the properties to an image (29b99aad-99b7-4e58-bd55-7640eb8ea9ae)::
 

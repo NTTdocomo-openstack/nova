@@ -36,21 +36,37 @@ class BaremetalPXETestCase(test.TestCase):
         s = pxe._random_alnum(100)
         self.assertEqual(len(s), 100)
 
-    def test_init(self):
-        self.flags(
-                baremetal_deploy_kernel="x",
-                baremetal_deploy_ramdisk="y",
-                )
-        pxe.PXE()
+    def test_get_deploy_aki_id(self):
+        p = pxe.PXE()
+        with_kernel = {"properties": {"deploy_kernel_id": "123"}}
+        without_kernel = {"properties": {}}
 
-        self.flags(
-                baremetal_deploy_kernel=None,
-                baremetal_deploy_ramdisk="y",
-                )
-        self.assertRaises(exception.NovaException, pxe.PXE)
+        self.flags(baremetal_deploy_kernel="x")
+        kernel = p._get_deploy_aki_id(with_kernel)
+        self.assertEqual(kernel, "123")
+        kernel = p._get_deploy_aki_id(without_kernel)
+        self.assertEqual(kernel, "x")
 
-        self.flags(
-                baremetal_deploy_kernel="x",
-                baremetal_deploy_ramdisk=None,
-                )
-        self.assertRaises(exception.NovaException, pxe.PXE)
+        self.flags(baremetal_deploy_kernel=None)
+        kernel = p._get_deploy_aki_id(with_kernel)
+        self.assertEqual(kernel, "123")
+        kernel = p._get_deploy_aki_id(without_kernel)
+        self.assertTrue(kernel is None)
+
+    def test_get_deploy_ari_id(self):
+        p = pxe.PXE()
+
+        with_ramdisk = {"properties": {"deploy_ramdisk_id": "123"}}
+        without_ramdisk = {"properties": {}}
+
+        self.flags(baremetal_deploy_ramdisk="x")
+        ramdisk = p._get_deploy_ari_id(with_ramdisk)
+        self.assertEqual(ramdisk, "123")
+        ramdisk = p._get_deploy_ari_id(without_ramdisk)
+        self.assertEqual(ramdisk, "x")
+
+        self.flags(baremetal_deploy_ramdisk=None)
+        ramdisk = p._get_deploy_ari_id(with_ramdisk)
+        self.assertEqual(ramdisk, "123")
+        ramdisk = p._get_deploy_ari_id(without_ramdisk)
+        self.assertTrue(ramdisk is None)
