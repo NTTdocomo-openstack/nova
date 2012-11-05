@@ -22,7 +22,6 @@ A driver for Bare-metal platform.
 """
 
 from nova.compute import power_state
-from nova.compute import resource_tracker
 from nova import context as nova_context
 from nova import db
 from nova import exception
@@ -32,6 +31,7 @@ from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 from nova.virt.baremetal import baremetal_states
 from nova.virt.baremetal import db as bmdb
+from nova.virt.baremetal import resource_trakcer as bmrt
 from nova.virt import driver
 from nova.virt import firewall
 from nova.virt.libvirt import imagecache
@@ -90,16 +90,6 @@ class NodeInUse(exception.NovaException):
 
 class NoSuitableNode(exception.NovaException):
     message = _("No node is suitable to run %(instance_uuid)s.")
-
-
-class BareMetalResourceTracker(resource_tracker.ResourceTracker):
-    def apply_instance_to_resources(self, resources, instance, sign):
-        """Update resources by instance and sign.
-        This method is overridden to modify the way to consume resources.
-        """
-        ratio = 1 if sign > 0 else 0
-        resources['memory_mb_used'] += ratio * resources['memory_mb']
-        resources['local_gb_used'] += ratio * resources['local_gb']
 
 
 def _get_baremetal_nodes(context):
@@ -461,4 +451,4 @@ class BareMetalDriver(driver.ComputeDriver):
         return [str(n['id']) for n in _get_baremetal_nodes(context)]
 
     def get_resource_tracker_class(self):
-        return BareMetalResourceTracker
+        return bmrt.BareMetalResourceTracker
