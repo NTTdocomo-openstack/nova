@@ -443,9 +443,9 @@ class BareMetalDriver(driver.ComputeDriver):
         for (network, mapping) in network_info:
             self._vif_driver.unplug(instance, (network, mapping))
 
-    def manage_image_cache(self, context):
+    def manage_image_cache(self, context, all_instances):
         """Manage the local cache of images."""
-        self._image_cache_manager.verify_base_images(context)
+        self._image_cache_manager.verify_base_images(context, all_instances)
 
     def get_console_output(self, instance):
         node = _get_baremetal_node_by_instance_uuid(instance['uuid'])
