@@ -60,7 +60,6 @@ from nova.tests import fake_network
 from nova.tests import fake_network_cache_model
 from nova.tests.image import fake as fake_image
 from nova import utils
-from nova.virt import driver as virt_driver
 from nova.volume import cinder
 
 
@@ -5856,49 +5855,3 @@ class ComputeInactiveImageTestCase(BaseTestCase):
         self.assertRaises(exception.ImageNotActive,
                           self.compute_api.create,
                           self.context, inst_type, None)
-
-
-class FakeMultiNodeVirtDriver(virt_driver.ComputeDriver):
-    def __init__(self):
-        self.nodes = ['A', 'B']
-
-    def get_available_nodes(self):
-        if len(self.nodes) <= 2:
-            self.nodes.append('Z')
-        else:
-            self.nodes.pop()
-        return self.nodes
-
-    def get_available_node_resource(self, nodename):
-        return {'vcpus': 100,
-                'vcpus_used': 0,
-                'cpu_info': None,
-                'memory_mb': 1,
-                'memory_mb_used': 0,
-                'local_gb': 2,
-                'local_gb_used': 0,
-                'hypervisor_hostname': nodename,
-                }
-
-
-def class_path(class_):
-    return class_.__module__ + '.' + class_.__name__
-
-
-class MultiNodeComputeTestCase(test.TestCase):
-    def setUp(self):
-        super(MultiNodeComputeTestCase, self).setUp()
-        self.flags(compute_driver=class_path(FakeMultiNodeVirtDriver))
-        self.compute = importutils.import_object(FLAGS.compute_manager)
-
-    def test_update_available_resource_add_remove_node(self):
-        ctx = context.get_admin_context()
-        self.compute.update_available_resource(ctx)
-        self.assertEqual(sorted(self.compute._resource_tracker_dict.keys()),
-                         ['A', 'B', 'Z'])
-        self.compute.update_available_resource(ctx)
-        self.assertEqual(sorted(self.compute._resource_tracker_dict.keys()),
-                         ['A', 'B'])
-        self.compute.update_available_resource(ctx)
-        self.assertEqual(sorted(self.compute._resource_tracker_dict.keys()),
-                         ['A', 'B', 'Z'])
