@@ -16,10 +16,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-"""Quotas for instances, volumes, and floating ips."""
+"""Quotas for instances, and floating ips."""
 
 import datetime
 
+from nova import config
 from nova import db
 from nova import exception
 from nova import flags
@@ -41,13 +42,7 @@ quota_opts = [
     cfg.IntOpt('quota_ram',
                default=50 * 1024,
                help='megabytes of instance ram allowed per project'),
-    cfg.IntOpt('quota_volumes',
-               default=10,
-               help='number of volumes allowed per project'),
-    cfg.IntOpt('quota_gigabytes',
-               default=1000,
-               help='number of volume gigabytes allowed per project'),
-    cfg.IntOpt('quota_floating_ips',
+   cfg.IntOpt('quota_floating_ips',
                default=10,
                help='number of floating ips allowed per project'),
     cfg.IntOpt('quota_metadata_items',
@@ -85,8 +80,8 @@ quota_opts = [
                help='default driver to use for quota checks'),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(quota_opts)
+CONF = config.CONF
+CONF.register_opts(quota_opts)
 
 
 class DbQuotaDriver(object):
@@ -314,7 +309,7 @@ class DbQuotaDriver(object):
 
         # Set up the reservation expiration
         if expire is None:
-            expire = FLAGS.reservation_expire
+            expire = CONF.reservation_expire
         if isinstance(expire, (int, long)):
             expire = datetime.timedelta(seconds=expire)
         if isinstance(expire, datetime.timedelta):
@@ -335,7 +330,7 @@ class DbQuotaDriver(object):
         #            session isn't available outside the DBAPI, we
         #            have to do the work there.
         return db.quota_reserve(context, resources, quotas, deltas, expire,
-                                FLAGS.until_refresh, FLAGS.max_age)
+                                CONF.until_refresh, CONF.max_age)
 
     def commit(self, context, reservations):
         """Commit reservations.
@@ -476,7 +471,7 @@ class BaseResource(object):
     def default(self):
         """Return the default value of the quota."""
 
-        return FLAGS[self.flag] if self.flag else -1
+        return CONF[self.flag] if self.flag else -1
 
 
 class ReservableResource(BaseResource):
@@ -568,7 +563,7 @@ class QuotaEngine(object):
         """Initialize a Quota object."""
 
         if not quota_driver_class:
-            quota_driver_class = FLAGS.quota_driver
+            quota_driver_class = CONF.quota_driver
 
         if isinstance(quota_driver_class, basestring):
             quota_driver_class = importutils.import_object(quota_driver_class)
@@ -813,12 +808,6 @@ def _sync_instances(context, project_id, session):
                 context, project_id, session=session)))
 
 
-def _sync_volumes(context, project_id, session):
-    return dict(zip(('volumes', 'gigabytes'),
-                    db.volume_data_get_for_project(
-                context, project_id, session=session)))
-
-
 def _sync_floating_ips(context, project_id, session):
     return dict(floating_ips=db.floating_ip_count_by_project(
             context, project_id, session=session))
@@ -836,8 +825,6 @@ resources = [
     ReservableResource('instances', _sync_instances, 'quota_instances'),
     ReservableResource('cores', _sync_instances, 'quota_cores'),
     ReservableResource('ram', _sync_instances, 'quota_ram'),
-    ReservableResource('volumes', _sync_volumes, 'quota_volumes'),
-    ReservableResource('gigabytes', _sync_volumes, 'quota_gigabytes'),
     ReservableResource('floating_ips', _sync_floating_ips,
                        'quota_floating_ips'),
     AbsoluteResource('metadata_items', 'quota_metadata_items'),

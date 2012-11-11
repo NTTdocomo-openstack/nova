@@ -17,10 +17,12 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from nova import config
 from nova import flags
 from nova.openstack.common import cfg
 from nova import test
 
+CONF = config.CONF
 FLAGS = flags.FLAGS
 FLAGS.register_opt(cfg.StrOpt('flags_unittest',
                               default='foo',
@@ -29,22 +31,22 @@ FLAGS.register_opt(cfg.StrOpt('flags_unittest',
 
 class FlagsTestCase(test.TestCase):
     def test_declare(self):
-        self.assert_('answer' not in FLAGS)
-        flags.DECLARE('answer', 'nova.tests.declare_flags')
-        self.assert_('answer' in FLAGS)
-        self.assertEqual(FLAGS.answer, 42)
+        self.assert_('answer' not in CONF)
+        CONF.import_opt('answer', 'nova.tests.declare_flags')
+        self.assert_('answer' in CONF)
+        self.assertEqual(CONF.answer, 42)
 
         # Make sure we don't overwrite anything
-        FLAGS.set_override('answer', 256)
-        self.assertEqual(FLAGS.answer, 256)
-        flags.DECLARE('answer', 'nova.tests.declare_flags')
-        self.assertEqual(FLAGS.answer, 256)
+        CONF.set_override('answer', 256)
+        self.assertEqual(CONF.answer, 256)
+        CONF.import_opt('answer', 'nova.tests.declare_flags')
+        self.assertEqual(CONF.answer, 256)
 
     def test_getopt_non_interspersed_args(self):
         self.assert_('runtime_answer' not in FLAGS)
 
         argv = ['flags_test', 'extra_arg', '--runtime_answer=60']
-        args = flags.parse_args(argv, default_config_files=[])
+        args = config.parse_args(argv, default_config_files=[])
         self.assertEqual(len(args), 3)
         self.assertEqual(argv, args)
 
@@ -60,7 +62,7 @@ class FlagsTestCase(test.TestCase):
                                           default='val',
                                           help='desc'))
         argv = ['flags_test', '--duplicate_answer=60', 'extra_arg']
-        args = flags.parse_args(argv, default_config_files=[])
+        args = config.parse_args(argv, default_config_files=[])
 
         self.assert_('duplicate_answer' not in FLAGS)
         self.assert_(FLAGS.duplicate_answer_long, 60)
@@ -68,7 +70,7 @@ class FlagsTestCase(test.TestCase):
         FLAGS.clear()
         FLAGS.register_cli_opt(cfg.IntOpt('duplicate_answer',
                                           default=60, help='desc'))
-        args = flags.parse_args(argv, default_config_files=[])
+        args = config.parse_args(argv, default_config_files=[])
         self.assertEqual(FLAGS.duplicate_answer, 60)
         self.assertEqual(FLAGS.duplicate_answer_long, 'val')
 

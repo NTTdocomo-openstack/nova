@@ -25,9 +25,7 @@ Driver base-classes:
 from nova import flags
 from nova.openstack.common import log as logging
 
-
 LOG = logging.getLogger(__name__)
-FLAGS = flags.FLAGS
 
 
 def block_device_info_get_root(block_device_info):
@@ -349,12 +347,15 @@ class ComputeDriver(object):
         """Restore the specified instance"""
         raise NotImplementedError()
 
-    def get_available_resource(self):
+    def get_available_resource(self, nodename):
         """Retrieve resource information.
 
         This method is called when nova-compute launches, and
         as part of a periodic task
 
+        :param nodename:
+            node which the caller want to get resources from
+            a driver that manages only one node can safely ignore this
         :returns: Dictionary describing resources
         """
         raise NotImplementedError()
@@ -604,8 +605,14 @@ class ComputeDriver(object):
         # TODO(Vek): Need to pass context in for access to auth_token
         pass
 
-    def poll_rebooting_instances(self, timeout):
-        """Poll for rebooting instances"""
+    def poll_rebooting_instances(self, timeout, instances):
+        """Poll for rebooting instances
+
+        :param timeout: the currently configured timeout for considering
+                        rebooting instances to be stuck
+        :param instances: instances that have been in rebooting state
+                          longer than the configured timeout
+        """
         # TODO(Vek): Need to pass context in for access to auth_token
         raise NotImplementedError()
 
@@ -737,21 +744,13 @@ class ComputeDriver(object):
 
         This method is for multi compute-nodes support. If a driver supports
         multi compute-nodes, this method returns a list of nodenames managed
-        by the service. Otherwise, this method should return None.
+        by the service. Otherwise, this method should return
+        [hypervisor_hostname].
         """
-        return None
-
-    def get_available_node_resource(self, nodename):
-        """Returns resource information for nodename.
-
-        This method is for multi compute-nodes support. If a driver supports
-        multi compute-nodes, this method returns a dictionary describing
-        resources of the node in the same form as get_available_resource.
-
-        If get_available_nodes() returns not-None, this method is called when
-        nova-compute launches, and as part of a periodic task.
-        """
-        raise NotImplementedError()
+        stats = self.get_host_stats(refresh=True)
+        if not isinstance(stats, list):
+            stats = [stats]
+        return [s['hypervisor_hostname'] for s in stats]
 
     def get_resource_tracker_class(self):
         """

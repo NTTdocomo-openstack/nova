@@ -73,6 +73,7 @@ gettext.install('nova', unicode=1)
 from nova.api.ec2 import ec2utils
 from nova.compute import instance_types
 from nova.compute import rpcapi as compute_rpcapi
+from nova import config
 from nova import context
 from nova import db
 from nova.db import migration
@@ -88,15 +89,15 @@ from nova.scheduler import rpcapi as scheduler_rpcapi
 from nova import utils
 from nova import version
 
-FLAGS = flags.FLAGS
-flags.DECLARE('flat_network_bridge', 'nova.network.manager')
-flags.DECLARE('num_networks', 'nova.network.manager')
-flags.DECLARE('multi_host', 'nova.network.manager')
-flags.DECLARE('network_size', 'nova.network.manager')
-flags.DECLARE('vlan_start', 'nova.network.manager')
-flags.DECLARE('vpn_start', 'nova.network.manager')
-flags.DECLARE('default_floating_pool', 'nova.network.manager')
-flags.DECLARE('public_interface', 'nova.network.linux_net')
+CONF = config.CONF
+CONF.import_opt('flat_network_bridge', 'nova.network.manager')
+CONF.import_opt('num_networks', 'nova.network.manager')
+CONF.import_opt('multi_host', 'nova.network.manager')
+CONF.import_opt('network_size', 'nova.network.manager')
+CONF.import_opt('vlan_start', 'nova.network.manager')
+CONF.import_opt('vpn_start', 'nova.network.manager')
+CONF.import_opt('default_floating_pool', 'nova.network.manager')
+CONF.import_opt('public_interface', 'nova.network.linux_net')
 
 QUOTAS = quota.QUOTAS
 
@@ -378,9 +379,9 @@ class FloatingIpCommands(object):
         """Creates floating ips for zone by range"""
         admin_context = context.get_admin_context()
         if not pool:
-            pool = FLAGS.default_floating_pool
+            pool = CONF.default_floating_pool
         if not interface:
-            interface = FLAGS.public_interface
+            interface = CONF.public_interface
 
         ips = ({'address': str(address), 'pool': pool, 'interface': interface}
                for address in self.address_to_hosts(ip_range))
@@ -474,7 +475,7 @@ class NetworkCommands(object):
                        if v and k != "self"))
         if multi_host is not None:
             kwargs['multi_host'] = multi_host == 'T'
-        net_manager = importutils.import_object(FLAGS.network_manager)
+        net_manager = importutils.import_object(CONF.network_manager)
         net_manager.create_networks(context.get_admin_context(), **kwargs)
 
     def list(self):
@@ -518,8 +519,8 @@ class NetworkCommands(object):
         if fixed_range is None and uuid is None:
             raise Exception("Please specify either fixed_range or uuid")
 
-        net_manager = importutils.import_object(FLAGS.network_manager)
-        if "QuantumManager" in FLAGS.network_manager:
+        net_manager = importutils.import_object(CONF.network_manager)
+        if "QuantumManager" in CONF.network_manager:
             if uuid is None:
                 raise Exception("UUID is required to delete Quantum Networks")
             if fixed_range:
@@ -633,7 +634,7 @@ class ServiceCommands(object):
                     _('Updated_At'))
         for svc in services:
             delta = now - (svc['updated_at'] or svc['created_at'])
-            alive = abs(utils.total_seconds(delta)) <= FLAGS.service_down_time
+            alive = abs(utils.total_seconds(delta)) <= CONF.service_down_time
             art = (alive and ":-)") or "XXX"
             active = 'enabled'
             if svc['disabled']:
@@ -914,146 +915,6 @@ class InstanceTypeCommands(object):
             _db_error(e)
 
 
-class StorageManagerCommands(object):
-    """Class for mangaging Storage Backends and Flavors"""
-
-    def flavor_list(self, flavor=None):
-        ctxt = context.get_admin_context()
-
-        try:
-            if flavor is None:
-                flavors = db.sm_flavor_get_all(ctxt)
-            else:
-                flavors = db.sm_flavor_get(ctxt, flavor)
-        except exception.NotFound as ex:
-            print _('error: %s') % ex
-            sys.exit(2)
-
-        print "%-18s\t%-20s\t%s" % (_('id'),
-                                    _('Label'),
-                                    _('Description'))
-
-        for flav in flavors:
-            print "%-18s\t%-20s\t%s" % (
-                    flav['id'],
-                    flav['label'],
-                    flav['description'])
-
-    def flavor_create(self, label, desc):
-        # TODO(renukaapte) flavor name must be unique
-        try:
-            db.sm_flavor_create(context.get_admin_context(),
-                                dict(label=label,
-                                     description=desc))
-        except exception.DBError, e:
-            _db_error(e)
-
-    def flavor_delete(self, label):
-        try:
-            db.sm_flavor_delete(context.get_admin_context(), label)
-
-        except exception.DBError, e:
-            _db_error(e)
-
-    def _splitfun(self, item):
-        i = item.split("=")
-        return i[0:2]
-
-    def backend_list(self, backend_conf_id=None):
-        ctxt = context.get_admin_context()
-
-        try:
-            if backend_conf_id is None:
-                backends = db.sm_backend_conf_get_all(ctxt)
-            else:
-                backends = db.sm_backend_conf_get(ctxt, backend_conf_id)
-
-        except exception.NotFound as ex:
-            print _('error: %s') % ex
-            sys.exit(2)
-
-        print "%-5s\t%-10s\t%-40s\t%-10s\t%s" % (_('id'),
-                                                      _('Flavor id'),
-                                                      _('SR UUID'),
-                                                      _('SR Type'),
-                                                      _('Config Parameters'),)
-
-        for b in backends:
-            print "%-5s\t%-10s\t%-40s\t%-10s\t%s" % (b['id'],
-                                                     b['flavor_id'],
-                                                     b['sr_uuid'],
-                                                     b['sr_type'],
-                                                     b['config_params'],)
-
-    def backend_add(self, flavor_label, sr_type, *args):
-        # TODO(renukaapte) Add backend_introduce.
-        ctxt = context.get_admin_context()
-        params = dict(map(self._splitfun, args))
-
-        if 'sr_uuid' in params:
-            try:
-                backend = db.sm_backend_conf_get_by_sr(ctxt,
-                                                       params['sr_uuid'])
-            except exception.DBError, e:
-                _db_error(e)
-
-            if backend:
-                print _('Backend config found. Would you like to recreate '
-                        'this?')
-                print _('(WARNING:Recreating will destroy all VDIs on '
-                        'backend!!)')
-                c = raw_input(_('Proceed? (y/n) '))
-                if c == 'y' or c == 'Y':
-                    try:
-                        db.sm_backend_conf_update(ctxt, backend['id'],
-                                                  dict(created=False))
-                    except exception.DBError, e:
-                        _db_error(e)
-                return
-
-            else:
-                print _('Backend config not found. Would you like to create '
-                        'it?')
-                print _('(WARNING: Creating will destroy all data on '
-                        'backend!!!)')
-                c = raw_input(_('Proceed? (y/n) '))
-                if c != 'y' and c != 'Y':
-                    return
-
-        print _('(WARNING: Creating will destroy all data on backend!!!)')
-        c = raw_input(_('Proceed? (y/n) '))
-        if c == 'y' or c == 'Y':
-            if flavor_label is None:
-                print _('error: backend needs to be associated with flavor')
-                sys.exit(2)
-
-            try:
-                flavors = db.sm_flavor_get_by_label(ctxt, flavor_label)
-            except exception.NotFound as ex:
-                print _('error: %s') % ex
-                sys.exit(2)
-
-            config_params = "".join(['%s=%s ' %
-                                   (key, params[key]) for key in params])
-
-            try:
-                db.sm_backend_conf_create(ctxt,
-                                          dict(flavor_id=flavors['id'],
-                                               sr_uuid=None,
-                                               sr_type=sr_type,
-                                               config_params=config_params))
-            except exception.DBError, e:
-                _db_error(e)
-
-    def backend_remove(self, backend_conf_id):
-        try:
-            db.sm_backend_conf_delete(context.get_admin_context(),
-                                      backend_conf_id)
-
-        except exception.DBError, e:
-            _db_error(e)
-
-
 class AgentBuildCommands(object):
     """Class for managing agent builds."""
 
@@ -1120,10 +981,10 @@ class GetLogCommands(object):
     def errors(self):
         """Get all of the errors from the log files"""
         error_found = 0
-        if FLAGS.logdir:
-            logs = [x for x in os.listdir(FLAGS.logdir) if x.endswith('.log')]
+        if CONF.logdir:
+            logs = [x for x in os.listdir(CONF.logdir) if x.endswith('.log')]
             for file in logs:
-                log_file = os.path.join(FLAGS.logdir, file)
+                log_file = os.path.join(CONF.logdir, file)
                 lines = [line.strip() for line in open(log_file, "r")]
                 lines.reverse()
                 print_name = 0
@@ -1178,7 +1039,6 @@ CATEGORIES = [
     ('project', ProjectCommands),
     ('service', ServiceCommands),
     ('shell', ShellCommands),
-    ('sm', StorageManagerCommands),
     ('version', VersionCommands),
     ('vm', VmCommands),
     ('vpn', VpnCommands),
@@ -1220,10 +1080,10 @@ def main():
     """Parse options and call the appropriate class/method."""
 
     try:
-        argv = flags.parse_args(sys.argv)
+        argv = config.parse_args(sys.argv)
         logging.setup("nova")
     except cfg.ConfigFilesNotFoundError:
-        cfgfile = FLAGS.config_file[-1] if FLAGS.config_file else None
+        cfgfile = CONF.config_file[-1] if CONF.config_file else None
         if cfgfile and not os.access(cfgfile, os.R_OK):
             st = os.stat(cfgfile)
             print _("Could not read %s. Re-running with sudo") % cfgfile

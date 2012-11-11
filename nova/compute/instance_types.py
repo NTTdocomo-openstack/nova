@@ -86,6 +86,9 @@ def create(name, memory, vcpus, root_gb, ephemeral_gb=None, flavorid=None,
     kwargs['flavorid'] = unicode(flavorid)
 
     # ensure is_public attribute is boolean
+    if not utils.is_valid_boolstr(is_public):
+        msg = _("is_public must be a boolean")
+        raise exception.InvalidInput(reason=msg)
     kwargs['is_public'] = utils.bool_from_str(is_public)
 
     try:
@@ -130,13 +133,16 @@ def get_default_instance_type():
     return get_instance_type_by_name(name)
 
 
-def get_instance_type(instance_type_id, ctxt=None):
+def get_instance_type(instance_type_id, ctxt=None, inactive=False):
     """Retrieves single instance type by id."""
     if instance_type_id is None:
         return get_default_instance_type()
 
     if ctxt is None:
         ctxt = context.get_admin_context()
+
+    if inactive:
+        ctxt = ctxt.elevated(read_deleted="yes")
 
     return db.instance_type_get(ctxt, instance_type_id)
 

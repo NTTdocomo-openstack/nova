@@ -25,10 +25,8 @@ from nova import flags
 from nova.network import model as network_model
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils
-from nova import utils
+from nova.openstack.common import uuidutils
 
-
-FLAGS = flags.FLAGS
 LOG = logging.getLogger(__name__)
 
 
@@ -130,7 +128,7 @@ def id_to_ec2_id(instance_id, template='i-%08x'):
 
 def id_to_ec2_inst_id(instance_id):
     """Get or create an ec2 instance ID (i-[base 16 number]) from uuid."""
-    if utils.is_uuid_like(instance_id):
+    if uuidutils.is_uuid_like(instance_id):
         ctxt = context.get_admin_context()
         int_id = get_int_id_from_instance_uuid(ctxt, instance_id)
         return id_to_ec2_id(int_id)
@@ -150,7 +148,7 @@ def get_instance_uuid_from_int_id(context, int_id):
 
 def id_to_ec2_snap_id(snapshot_id):
     """Get or create an ec2 volume ID (vol-[base 16 number]) from uuid."""
-    if utils.is_uuid_like(snapshot_id):
+    if uuidutils.is_uuid_like(snapshot_id):
         ctxt = context.get_admin_context()
         int_id = get_int_id_from_snapshot_uuid(ctxt, snapshot_id)
         return id_to_ec2_id(int_id, 'snap-%08x')
@@ -160,7 +158,7 @@ def id_to_ec2_snap_id(snapshot_id):
 
 def id_to_ec2_vol_id(volume_id):
     """Get or create an ec2 volume ID (vol-[base 16 number]) from uuid."""
-    if utils.is_uuid_like(volume_id):
+    if uuidutils.is_uuid_like(volume_id):
         ctxt = context.get_admin_context()
         int_id = get_int_id_from_volume_uuid(ctxt, volume_id)
         return id_to_ec2_id(int_id, 'vol-%08x')
@@ -253,10 +251,6 @@ def get_int_id_from_snapshot_uuid(context, snapshot_uuid):
 def get_snapshot_uuid_from_int_id(context, int_id):
     return db.get_snapshot_uuid_by_ec2_id(context, int_id)
 
-
-def ec2_instance_id_to_uuid(context, ec2_id):
-    int_id = ec2_id_to_id(ec2_id)
-    return db.instance_get(context, int_id)['uuid']
 
 _c2u = re.compile('(((?<=[a-z])[A-Z])|([A-Z](?![A-Z]|$)))')
 

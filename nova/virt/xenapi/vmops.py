@@ -30,6 +30,7 @@ from nova.compute import api as compute
 from nova.compute import power_state
 from nova.compute import vm_mode
 from nova.compute import vm_states
+from nova import config
 from nova import context as nova_context
 from nova import db
 from nova import exception
@@ -60,10 +61,9 @@ xenapi_vmops_opts = [
                help='The XenAPI VIF driver using XenServer Network APIs.')
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(xenapi_vmops_opts)
-
-flags.DECLARE('vncserver_proxyclient_address', 'nova.vnc')
+CONF = config.CONF
+CONF.register_opts(xenapi_vmops_opts)
+CONF.import_opt('vncserver_proxyclient_address', 'nova.vnc')
 
 DEFAULT_FIREWALL_DRIVER = "%s.%s" % (
     firewall.__name__,
@@ -153,12 +153,18 @@ class VMOps(object):
         self.firewall_driver = firewall.load_driver(
             default=DEFAULT_FIREWALL_DRIVER,
             xenapi_session=self._session)
-        vif_impl = importutils.import_class(FLAGS.xenapi_vif_driver)
+        vif_impl = importutils.import_class(CONF.xenapi_vif_driver)
         self.vif_driver = vif_impl(xenapi_session=self._session)
         self.default_root_dev = '/dev/sda'
 
+    @property
+    def agent_enabled(self):
+        return not CONF.xenapi_disable_agent
+
     def _get_agent(self, instance, vm_ref):
-        return xapi_agent.XenAPIBasedAgent(self._session, instance, vm_ref)
+        if self.agent_enabled:
+            return xapi_agent.XenAPIBasedAgent(self._session, instance, vm_ref)
+        raise exception.NovaException(_("Error: Agent is disabled"))
 
     def list_instances(self):
         """List VM instances."""
@@ -416,7 +422,7 @@ class VMOps(object):
     def _setup_vm_networking(self, instance, vm_ref, vdis, network_info,
             rescue):
         # Alter the image before VM start for network injection.
-        if FLAGS.flat_injected:
+        if CONF.flat_injected:
             vm_utils.preconfigure_instance(self._session, instance,
                                            vdis['root']['ref'], network_info)
 
@@ -517,22 +523,11 @@ class VMOps(object):
         self._start(instance, vm_ref)
 
         ctx = nova_context.get_admin_context()
-        agent_build = db.agent_build_get_by_triple(ctx, 'xen',
-                              instance['os_type'], instance['architecture'])
-        if agent_build:
-            LOG.info(_('Latest agent build for %(hypervisor)s/%(os)s'
-                       '/%(architecture)s is %(version)s') % agent_build)
-        else:
-            LOG.info(_('No agent build found for %(hypervisor)s/%(os)s'
-                       '/%(architecture)s') % {
-                        'hypervisor': 'xen',
-                        'os': instance['os_type'],
-                        'architecture': instance['architecture']})
 
         # Wait for boot to finish
         LOG.debug(_('Waiting for instance state to become running'),
                   instance=instance)
-        expiration = time.time() + FLAGS.xenapi_running_timeout
+        expiration = time.time() + CONF.xenapi_running_timeout
         while time.time() < expiration:
             state = self.get_info(instance, vm_ref)['state']
             if state == power_state.RUNNING:
@@ -540,34 +535,47 @@ class VMOps(object):
 
             greenthread.sleep(0.5)
 
-        # Update agent, if necessary
-        # This also waits until the agent starts
-        agent = self._get_agent(instance, vm_ref)
-        version = agent.get_agent_version()
-        if version:
-            LOG.info(_('Instance agent version: %s'), version,
-                     instance=instance)
+        if self.agent_enabled:
+            agent_build = db.agent_build_get_by_triple(
+                ctx, 'xen', instance['os_type'], instance['architecture'])
+            if agent_build:
+                LOG.info(_('Latest agent build for %(hypervisor)s/%(os)s'
+                           '/%(architecture)s is %(version)s') % agent_build)
+            else:
+                LOG.info(_('No agent build found for %(hypervisor)s/%(os)s'
+                           '/%(architecture)s') % {
+                            'hypervisor': 'xen',
+                            'os': instance['os_type'],
+                            'architecture': instance['architecture']})
 
-        if (version and agent_build and
-            cmp_version(version, agent_build['version']) < 0):
-            agent.agent_update(agent_build)
+            # Update agent, if necessary
+            # This also waits until the agent starts
+            agent = self._get_agent(instance, vm_ref)
+            version = agent.get_agent_version()
+            if version:
+                LOG.info(_('Instance agent version: %s'), version,
+                         instance=instance)
 
-        # if the guest agent is not available, configure the
-        # instance, but skip the admin password configuration
-        no_agent = version is None
+            if (version and agent_build and
+                cmp_version(version, agent_build['version']) < 0):
+                agent.agent_update(agent_build)
 
-        # Inject files, if necessary
-        if injected_files:
-            # Inject any files, if specified
-            for path, contents in injected_files:
-                agent.inject_file(path, contents)
+            # if the guest agent is not available, configure the
+            # instance, but skip the admin password configuration
+            no_agent = version is None
 
-        # Set admin password, if necessary
-        if admin_password and not no_agent:
-            agent.set_admin_password(admin_password)
+            # Inject files, if necessary
+            if injected_files:
+                # Inject any files, if specified
+                for path, contents in injected_files:
+                    agent.inject_file(path, contents)
 
-        # Reset network config
-        agent.resetnetwork()
+            # Set admin password, if necessary
+            if admin_password and not no_agent:
+                agent.set_admin_password(admin_password)
+
+            # Reset network config
+            agent.resetnetwork()
 
         # Set VCPU weight
         vcpu_weight = instance['instance_type']['vcpu_weight']
@@ -860,15 +868,21 @@ class VMOps(object):
 
     def set_admin_password(self, instance, new_pass):
         """Set the root/admin password on the VM instance."""
-        vm_ref = self._get_vm_opaque_ref(instance)
-        agent = self._get_agent(instance, vm_ref)
-        agent.set_admin_password(new_pass)
+        if self.agent_enabled:
+            vm_ref = self._get_vm_opaque_ref(instance)
+            agent = self._get_agent(instance, vm_ref)
+            agent.set_admin_password(new_pass)
+        else:
+            raise NotImplementedError()
 
     def inject_file(self, instance, path, contents):
         """Write a file to the VM instance."""
-        vm_ref = self._get_vm_opaque_ref(instance)
-        agent = self._get_agent(instance, vm_ref)
-        agent.inject_file(path, contents)
+        if self.agent_enabled:
+            vm_ref = self._get_vm_opaque_ref(instance)
+            agent = self._get_agent(instance, vm_ref)
+            agent.inject_file(path, contents)
+        else:
+            raise NotImplementedError()
 
     @staticmethod
     def _sanitize_xenstore_key(key):
@@ -1145,10 +1159,12 @@ class VMOps(object):
                         instance=instance)
         else:
             vm_utils.shutdown_vm(self._session, instance, vm_ref, hard=True)
+            self._acquire_bootlock(vm_ref)
 
     def restore(self, instance):
         """Restore the specified instance."""
         vm_ref = self._get_vm_opaque_ref(instance)
+        self._release_bootlock(vm_ref)
         self._start(instance, vm_ref)
 
     def power_off(self, instance):
@@ -1172,7 +1188,7 @@ class VMOps(object):
             if timeutils.is_older_than(task_created, timeout):
                 self._session.call_xenapi("task.cancel", task_ref)
 
-    def poll_rebooting_instances(self, timeout):
+    def poll_rebooting_instances(self, timeout, instances):
         """Look for expirable rebooting instances.
 
             - issue a "hard" reboot to any instance that has been stuck in a
@@ -1183,7 +1199,6 @@ class VMOps(object):
         self._cancel_stale_tasks(timeout, 'VM.clean_reboot')
 
         ctxt = nova_context.get_admin_context()
-        instances = db.instance_get_all_hung_in_rebooting(ctxt, timeout)
 
         instances_info = dict(instance_count=len(instances),
                 timeout=timeout)
@@ -1300,7 +1315,7 @@ class VMOps(object):
         path = "/console?ref=%s&session_id=%s" % (str(vm_ref), session_id)
 
         # NOTE: XS5.6sp2+ use http over port 80 for xenapi com
-        return {'host': FLAGS.vncserver_proxyclient_address, 'port': 80,
+        return {'host': CONF.vncserver_proxyclient_address, 'port': 80,
                 'internal_access_path': path}
 
     def _vif_xenstore_data(self, vif):
@@ -1421,9 +1436,12 @@ class VMOps(object):
 
     def reset_network(self, instance):
         """Calls resetnetwork method in agent."""
-        vm_ref = self._get_vm_opaque_ref(instance)
-        agent = self._get_agent(instance, vm_ref)
-        agent.resetnetwork()
+        if self.agent_enabled:
+            vm_ref = self._get_vm_opaque_ref(instance)
+            agent = self._get_agent(instance, vm_ref)
+            agent.resetnetwork()
+        else:
+            raise NotImplementedError()
 
     def inject_hostname(self, instance, vm_ref, hostname):
         """Inject the hostname of the instance into the xenstore."""
@@ -1520,10 +1538,10 @@ class VMOps(object):
                                                network_info=network_info)
 
     def _get_host_uuid_from_aggregate(self, context, hostname):
-        current_aggregate = db.aggregate_get_by_host(context, FLAGS.host,
+        current_aggregate = db.aggregate_get_by_host(context, CONF.host,
                key=pool_states.POOL_FLAG)[0]
         if not current_aggregate:
-            raise exception.AggregateHostNotFound(host=FLAGS.host)
+            raise exception.AggregateHostNotFound(host=CONF.host)
         try:
             return current_aggregate.metadetails[hostname]
         except KeyError:

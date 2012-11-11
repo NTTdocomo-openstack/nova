@@ -15,7 +15,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from nova import flags
+from nova import config
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova.scheduler import filters
@@ -27,8 +27,8 @@ cpu_allocation_ratio_opt = cfg.FloatOpt('cpu_allocation_ratio',
         default=16.0,
         help='Virtual CPU to Physical CPU allocation ratio')
 
-FLAGS = flags.FLAGS
-FLAGS.register_opt(cpu_allocation_ratio_opt)
+CONF = config.CONF
+CONF.register_opt(cpu_allocation_ratio_opt)
 
 
 class CoreFilter(filters.BaseHostFilter):
@@ -37,7 +37,7 @@ class CoreFilter(filters.BaseHostFilter):
     def host_passes(self, host_state, filter_properties):
         """Return True if host has sufficient CPU cores."""
         instance_type = filter_properties.get('instance_type')
-        if host_state.topic != FLAGS.compute_topic or not instance_type:
+        if not instance_type:
             return True
 
         if not host_state.vcpus_total:
@@ -46,7 +46,7 @@ class CoreFilter(filters.BaseHostFilter):
             return True
 
         instance_vcpus = instance_type['vcpus']
-        vcpus_total = host_state.vcpus_total * FLAGS.cpu_allocation_ratio
+        vcpus_total = host_state.vcpus_total * CONF.cpu_allocation_ratio
 
         # Only provide a VCPU limit to compute if the virt driver is reporting
         # an accurate count of installed VCPUs. (XenServer driver does not)

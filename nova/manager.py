@@ -55,6 +55,7 @@ This module provides Manager, a base class for managers.
 
 import eventlet
 
+from nova import config
 from nova.db import base
 from nova import flags
 from nova.openstack.common import log as logging
@@ -63,10 +64,7 @@ from nova.openstack.common.rpc import dispatcher as rpc_dispatcher
 from nova.scheduler import rpcapi as scheduler_rpcapi
 from nova import version
 
-
-FLAGS = flags.FLAGS
-
-
+CONF = config.CONF
 LOG = logging.getLogger(__name__)
 
 
@@ -139,7 +137,7 @@ class Manager(base.Base):
 
     def __init__(self, host=None, db_driver=None):
         if not host:
-            host = FLAGS.host
+            host = CONF.host
         self.host = host
         self.load_plugins()
         super(Manager, self).__init__(db_driver)
@@ -215,8 +213,8 @@ class Manager(base.Base):
 
     def service_config(self, context):
         config = {}
-        for key in FLAGS:
-            config[key] = FLAGS.get(key, None)
+        for key in CONF:
+            config[key] = CONF.get(key, None)
         return config
 
 
@@ -256,7 +254,7 @@ class SchedulerDependentManager(Manager):
         if self.last_capabilities:
             LOG.debug(_('Notifying Schedulers of capabilities ...'))
             for capability_item in self.last_capabilities:
-                name = capability_item.get('service_name', self.service_name)
-                host = capability_item.get('host', self.host)
                 self.scheduler_rpcapi.update_service_capabilities(context,
-                        name, host, capability_item)
+                        self.service_name, self.host, capability_item)
+        # TODO(NTTdocomo): Make update_service_capabilities() accept a list
+        #                  of capabilities

@@ -17,6 +17,7 @@
 from nova.compute import task_states
 from nova.compute import vm_states
 
+from nova import config
 from nova import context as nova_context
 from nova import flags
 
@@ -50,8 +51,8 @@ powervm_opts = [
                help='Local directory to download glance images to'),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(powervm_opts)
+CONF = config.CONF
+CONF.register_opts(powervm_opts)
 
 
 class PowerVMDriver(driver.ComputeDriver):
@@ -141,7 +142,7 @@ class PowerVMDriver(driver.ComputeDriver):
         """Power on the specified instance"""
         self._powervm.power_on(instance['name'])
 
-    def get_available_resource(self):
+    def get_available_resource(self, nodename):
         """Retrieve resource info."""
         return self._powervm.get_available_resource()
 

@@ -21,6 +21,7 @@
 
 import datetime
 
+from nova import config
 from nova import context
 from nova import db
 from nova import exception
@@ -29,7 +30,11 @@ from nova.openstack.common import timeutils
 from nova import test
 from nova import utils
 
+
 FLAGS = flags.FLAGS
+CONF = config.CONF
+CONF.import_opt('reserved_host_memory_mb', 'nova.compute.resource_tracker')
+CONF.import_opt('reserved_host_disk_mb', 'nova.compute.resource_tracker')
 
 
 class DbApiTestCase(test.TestCase):
@@ -376,6 +381,10 @@ class DbApiTestCase(test.TestCase):
         scope = domain_ref.scope
         self.assertEqual(project, self.project_id)
         self.assertEqual(scope, 'public')
+
+        expected = [domain1, domain2]
+        domains = db.dnsdomain_list(ctxt)
+        self.assertEqual(expected, domains)
 
         db.dnsdomain_unregister(ctxt, domain1)
         db.dnsdomain_unregister(ctxt, domain2)
@@ -1077,187 +1086,3 @@ class InstanceDestroyConstraints(test.TestCase):
                           ctx, instance['uuid'], constraint)
         instance = db.instance_get_by_uuid(ctx, instance['uuid'])
         self.assertFalse(instance['deleted'])
-
-
-def _get_sm_backend_params():
-    config_params = ("name_label=testsmbackend "
-                     "server=localhost "
-                     "serverpath=/tmp/nfspath")
-    params = dict(flavor_id=1,
-                sr_uuid=None,
-                sr_type='nfs',
-                config_params=config_params)
-    return params
-
-
-def _get_sm_flavor_params():
-    params = dict(label="gold",
-                  description="automatic backups")
-    return params
-
-
-class SMVolumeDBApiTestCase(test.TestCase):
-    def setUp(self):
-        super(SMVolumeDBApiTestCase, self).setUp()
-        self.user_id = 'fake'
-        self.project_id = 'fake'
-        self.context = context.RequestContext(self.user_id, self.project_id)
-
-    def test_sm_backend_conf_create(self):
-        params = _get_sm_backend_params()
-        ctxt = context.get_admin_context()
-        beconf = db.sm_backend_conf_create(ctxt,
-                                           params)
-        self.assertIsInstance(beconf['id'], int)
-
-    def test_sm_backend_conf_create_raise_duplicate(self):
-        params = _get_sm_backend_params()
-        ctxt = context.get_admin_context()
-        beconf = db.sm_backend_conf_create(ctxt,
-                                           params)
-        self.assertIsInstance(beconf['id'], int)
-        self.assertRaises(exception.Duplicate,
-                          db.sm_backend_conf_create,
-                          ctxt,
-                          params)
-
-    def test_sm_backend_conf_update(self):
-        ctxt = context.get_admin_context()
-        params = _get_sm_backend_params()
-        beconf = db.sm_backend_conf_create(ctxt,
-                                           params)
-        beconf = db.sm_backend_conf_update(ctxt,
-                                           beconf['id'],
-                                           dict(sr_uuid="FA15E-1D"))
-        self.assertEqual(beconf['sr_uuid'], "FA15E-1D")
-
-    def test_sm_backend_conf_update_raise_notfound(self):
-        ctxt = context.get_admin_context()
-        self.assertRaises(exception.NotFound,
-                          db.sm_backend_conf_update,
-                          ctxt,
-                          7,
-                          dict(sr_uuid="FA15E-1D"))
-
-    def test_sm_backend_conf_get(self):
-        ctxt = context.get_admin_context()
-        params = _get_sm_backend_params()
-        beconf = db.sm_backend_conf_create(ctxt,
-                                           params)
-        val = db.sm_backend_conf_get(ctxt, beconf['id'])
-        self.assertDictMatch(dict(val), dict(beconf))
-
-    def test_sm_backend_conf_get_raise_notfound(self):
-        ctxt = context.get_admin_context()
-        self.assertRaises(exception.NotFound,
-                          db.sm_backend_conf_get,
-                          ctxt,
-                          7)
-
-    def test_sm_backend_conf_get_by_sr(self):
-        ctxt = context.get_admin_context()
-        params = _get_sm_backend_params()
-        beconf = db.sm_backend_conf_create(ctxt,
-                                           params)
-        val = db.sm_backend_conf_get_by_sr(ctxt, beconf['sr_uuid'])
-        self.assertDictMatch(dict(val), dict(beconf))
-
-    def test_sm_backend_conf_get_by_sr_raise_notfound(self):
-        ctxt = context.get_admin_context()
-        self.assertRaises(exception.NotFound,
-                          db.sm_backend_conf_get_by_sr,
-                          ctxt,
-                          "FA15E-1D")
-
-    def test_sm_backend_conf_delete(self):
-        ctxt = context.get_admin_context()
-        params = _get_sm_backend_params()
-        beconf = db.sm_backend_conf_create(ctxt,
-                                           params)
-        db.sm_backend_conf_delete(ctxt, beconf['id'])
-        self.assertRaises(exception.NotFound,
-                          db.sm_backend_conf_get,
-                          ctxt,
-                          beconf['id'])
-
-    def test_sm_backend_conf_delete_nonexisting(self):
-        ctxt = context.get_admin_context()
-        db.sm_backend_conf_delete(ctxt, "FA15E-1D")
-
-    def test_sm_flavor_create(self):
-        ctxt = context.get_admin_context()
-        params = _get_sm_flavor_params()
-        flav = db.sm_flavor_create(ctxt,
-                                   params)
-        self.assertIsInstance(flav['id'], int)
-
-    def sm_flavor_create_raise_duplicate(self):
-        ctxt = context.get_admin_context()
-        params = _get_sm_flavor_params()
-        flav = db.sm_flavor_create(ctxt,
-                                   params)
-        self.assertRaises(exception.Duplicate,
-                          db.sm_flavor_create,
-                          params)
-
-    def test_sm_flavor_update(self):
-        ctxt = context.get_admin_context()
-        params = _get_sm_flavor_params()
-        flav = db.sm_flavor_create(ctxt,
-                                   params)
-        newparms = dict(description="basic volumes")
-        flav = db.sm_flavor_update(ctxt, flav['id'], newparms)
-        self.assertEqual(flav['description'], "basic volumes")
-
-    def test_sm_flavor_update_raise_notfound(self):
-        ctxt = context.get_admin_context()
-        self.assertRaises(exception.NotFound,
-                          db.sm_flavor_update,
-                          ctxt,
-                          7,
-                          dict(description="fakedesc"))
-
-    def test_sm_flavor_delete(self):
-        ctxt = context.get_admin_context()
-        params = _get_sm_flavor_params()
-        flav = db.sm_flavor_create(ctxt,
-                                   params)
-        db.sm_flavor_delete(ctxt, flav['id'])
-        self.assertRaises(exception.NotFound,
-                          db.sm_flavor_get,
-                          ctxt,
-                          "gold")
-
-    def test_sm_flavor_delete_nonexisting(self):
-        ctxt = context.get_admin_context()
-        db.sm_flavor_delete(ctxt, 7)
-
-    def test_sm_flavor_get(self):
-        ctxt = context.get_admin_context()
-        params = _get_sm_flavor_params()
-        flav = db.sm_flavor_create(ctxt,
-                                   params)
-        val = db.sm_flavor_get(ctxt, flav['id'])
-        self.assertDictMatch(dict(val), dict(flav))
-
-    def test_sm_flavor_get_raise_notfound(self):
-        ctxt = context.get_admin_context()
-        self.assertRaises(exception.NotFound,
-                          db.sm_flavor_get,
-                          ctxt,
-                          7)
-
-    def test_sm_flavor_get_by_label(self):
-        ctxt = context.get_admin_context()
-        params = _get_sm_flavor_params()
-        flav = db.sm_flavor_create(ctxt,
-                                   params)
-        val = db.sm_flavor_get_by_label(ctxt, flav['label'])
-        self.assertDictMatch(dict(val), dict(flav))
-
-    def test_sm_flavor_get_by_label_raise_notfound(self):
-        ctxt = context.get_admin_context()
-        self.assertRaises(exception.NotFound,
-                          db.sm_flavor_get,
-                          ctxt,
-                          "fake")

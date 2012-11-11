@@ -33,6 +33,7 @@ from nova import compute
 from nova.compute import api as compute_api
 from nova.compute import instance_types
 from nova.compute import vm_states
+from nova import config
 from nova import db
 from nova import exception
 from nova import flags
@@ -45,7 +46,7 @@ from nova import utils
 from nova import volume
 
 
-FLAGS = flags.FLAGS
+CONF = config.CONF
 
 LOG = logging.getLogger(__name__)
 
@@ -283,22 +284,22 @@ class CloudController(object):
         return {'availabilityZoneInfo': result}
 
     def describe_regions(self, context, region_name=None, **kwargs):
-        if FLAGS.region_list:
+        if CONF.region_list:
             regions = []
-            for region in FLAGS.region_list:
+            for region in CONF.region_list:
                 name, _sep, host = region.partition('=')
-                endpoint = '%s://%s:%s%s' % (FLAGS.ec2_scheme,
+                endpoint = '%s://%s:%s%s' % (CONF.ec2_scheme,
                                              host,
-                                             FLAGS.ec2_port,
-                                             FLAGS.ec2_path)
+                                             CONF.ec2_port,
+                                             CONF.ec2_path)
                 regions.append({'regionName': name,
                                 'regionEndpoint': endpoint})
         else:
             regions = [{'regionName': 'nova',
-                        'regionEndpoint': '%s://%s:%s%s' % (FLAGS.ec2_scheme,
-                                                            FLAGS.ec2_host,
-                                                            FLAGS.ec2_port,
-                                                            FLAGS.ec2_path)}]
+                        'regionEndpoint': '%s://%s:%s%s' % (CONF.ec2_scheme,
+                                                            CONF.ec2_host,
+                                                            CONF.ec2_port,
+                                                            CONF.ec2_path)}]
         return {'regionInfo': regions}
 
     def describe_snapshots(self,
@@ -366,7 +367,7 @@ class CloudController(object):
         result = []
         for key_pair in key_pairs:
             # filter out the vpn keys
-            suffix = FLAGS.vpn_key_suffix
+            suffix = CONF.vpn_key_suffix
             if context.is_admin or not key_pair['name'].endswith(suffix):
                 result.append({
                     'keyName': key_pair['name'],
@@ -652,7 +653,7 @@ class CloudController(object):
     def create_security_group(self, context, group_name, group_description):
         if isinstance(group_name, unicode):
             group_name = group_name.encode('utf-8')
-        if FLAGS.ec2_strict_validation:
+        if CONF.ec2_strict_validation:
             # EC2 specification gives constraints for name and description:
             # Accepts alphanumeric characters, spaces, dashes, and underscores
             allowed = '^[a-zA-Z0-9_\- ]+$'
@@ -695,8 +696,8 @@ class CloudController(object):
         else:
             ec2_id = instance_id
         validate_ec2_id(ec2_id)
-        instance_id = ec2utils.ec2_id_to_id(ec2_id)
-        instance = self.compute_api.get(context, instance_id)
+        instance_uuid = ec2utils.ec2_inst_id_to_uuid(context, ec2_id)
+        instance = self.compute_api.get(context, instance_uuid)
         output = self.compute_api.get_console_output(context, instance)
         now = timeutils.utcnow()
         return {"InstanceId": ec2_id,
@@ -806,8 +807,8 @@ class CloudController(object):
         validate_ec2_id(instance_id)
         validate_ec2_id(volume_id)
         volume_id = ec2utils.ec2_vol_id_to_uuid(volume_id)
-        instance_id = ec2utils.ec2_id_to_id(instance_id)
-        instance = self.compute_api.get(context, instance_id)
+        instance_uuid = ec2utils.ec2_inst_id_to_uuid(context, instance_id)
+        instance = self.compute_api.get(context, instance_uuid)
         msg = _("Attach volume %(volume_id)s to instance %(instance_id)s"
                 " at %(device)s") % locals()
         LOG.audit(msg, context=context)
@@ -821,7 +822,7 @@ class CloudController(object):
         volume = self.volume_api.get(context, volume_id)
         return {'attachTime': volume['attach_time'],
                 'device': volume['mountpoint'],
-                'instanceId': ec2utils.id_to_ec2_inst_id(instance_id),
+                'instanceId': ec2utils.id_to_ec2_inst_id(instance_uuid),
                 'requestId': context.request_id,
                 'status': volume['attach_status'],
                 'volumeId': ec2utils.id_to_ec2_vol_id(volume_id)}
@@ -920,11 +921,10 @@ class CloudController(object):
             raise exception.EC2APIError(
                 _('attribute not supported: %s') % attribute)
 
-        ec2_instance_id = instance_id
         validate_ec2_id(instance_id)
-        instance_id = ec2utils.ec2_id_to_id(ec2_instance_id)
-        instance = self.compute_api.get(context, instance_id)
-        result = {'instance_id': ec2_instance_id}
+        instance_uuid = ec2utils.ec2_inst_id_to_uuid(context, instance_id)
+        instance = self.compute_api.get(context, instance_uuid)
+        result = {'instance_id': instance_id}
         fn(instance, result)
         return result
 
@@ -957,8 +957,8 @@ class CloudController(object):
             i['previousState'] = _state_description(previous_state['vm_state'],
                                         previous_state['shutdown_terminate'])
             try:
-                internal_id = ec2utils.ec2_id_to_id(ec2_id)
-                instance = self.compute_api.get(context, internal_id)
+                instance_uuid = ec2utils.ec2_inst_id_to_uuid(context, ec2_id)
+                instance = self.compute_api.get(context, instance_uuid)
                 i['currentState'] = _state_description(instance['vm_state'],
                                             instance['shutdown_terminate'])
             except exception.NotFound:
@@ -1048,7 +1048,7 @@ class CloudController(object):
                 instances = []
         for instance in instances:
             if not context.is_admin:
-                if instance['image_ref'] == str(FLAGS.vpn_image_id):
+                if instance['image_ref'] == str(CONF.vpn_image_id):
                     continue
             i = {}
             instance_uuid = instance['uuid']
@@ -1070,7 +1070,7 @@ class CloudController(object):
                 floating_ip = ip_info['floating_ips'][0]
             if ip_info['fixed_ip6s']:
                 i['dnsNameV6'] = ip_info['fixed_ip6s'][0]
-            if FLAGS.ec2_private_dns_show_ip:
+            if CONF.ec2_private_dns_show_ip:
                 i['privateDnsName'] = fixed_ip
             else:
                 i['privateDnsName'] = instance['hostname']
@@ -1153,8 +1153,8 @@ class CloudController(object):
     def associate_address(self, context, instance_id, public_ip, **kwargs):
         LOG.audit(_("Associate address %(public_ip)s to"
                 " instance %(instance_id)s") % locals(), context=context)
-        instance_id = ec2utils.ec2_id_to_id(instance_id)
-        instance = self.compute_api.get(context, instance_id)
+        instance_uuid = ec2utils.ec2_inst_id_to_uuid(context, instance_id)
+        instance = self.compute_api.get(context, instance_uuid)
 
         cached_ipinfo = ec2utils.get_ip_info_for_instance(context, instance)
         fixed_ips = cached_ipinfo['fixed_ips'] + cached_ipinfo['fixed_ip6s']
@@ -1248,8 +1248,8 @@ class CloudController(object):
         instances = []
         for ec2_id in instance_id:
             validate_ec2_id(ec2_id)
-            _instance_id = ec2utils.ec2_id_to_id(ec2_id)
-            instance = self.compute_api.get(context, _instance_id)
+            instance_uuid = ec2utils.ec2_inst_id_to_uuid(context, ec2_id)
+            instance = self.compute_api.get(context, instance_uuid)
             instances.append(instance)
         return instances
 
@@ -1512,8 +1512,8 @@ class CloudController(object):
         name = kwargs.get('name')
         validate_ec2_id(instance_id)
         ec2_instance_id = instance_id
-        instance_id = ec2utils.ec2_id_to_id(ec2_instance_id)
-        instance = self.compute_api.get(context, instance_id)
+        instance_uuid = ec2utils.ec2_inst_id_to_uuid(context, ec2_instance_id)
+        instance = self.compute_api.get(context, instance_uuid)
 
         bdms = self.compute_api.get_instance_bdms(context, instance)
 
@@ -1543,7 +1543,7 @@ class CloudController(object):
             start_time = time.time()
             while vm_state != vm_states.STOPPED:
                 time.sleep(1)
-                instance = self.compute_api.get(context, instance_id)
+                instance = self.compute_api.get(context, instance_uuid)
                 vm_state = instance['vm_state']
                 # NOTE(yamahata): timeout and error. 1 hour for now for safety.
                 #                 Is it too short/long?

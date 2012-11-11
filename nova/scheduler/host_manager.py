@@ -21,9 +21,9 @@ import UserDict
 
 from nova.compute import task_states
 from nova.compute import vm_states
+from nova import config
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils
@@ -49,8 +49,8 @@ host_manager_opts = [
                       'when not specified in the request.'),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(host_manager_opts)
+CONF = config.CONF
+CONF.register_opts(host_manager_opts)
 
 LOG = logging.getLogger(__name__)
 
@@ -93,30 +93,11 @@ class HostState(object):
     previously used and lock down access.
     """
 
-    def __init__(self, host, topic, capabilities=None, service=None):
+    def __init__(self, host, node, capabilities=None, service=None):
         self.host = host
-        self.topic = topic
-        self.update_capabilities(topic, capabilities, service)
+        self.nodename = node
+        self.update_capabilities(capabilities, service)
 
-        # Read-only capability dicts
-
-        if capabilities is None:
-            capabilities = {}
-        self.capabilities = ReadOnlyDict(capabilities.get(topic, None))
-
-        # Check if the service is really using multi-node.
-        # Scheduler doesn't use 'node' if the compute is single-node
-        self.nodename = self.capabilities.get('node')
-        if self.nodename != self.capabilities.get('hypervisor_hostname'):
-            LOG.warn(_('node(%(node)s) and hypervisor_hostname(%(hvhn)s) '
-                       'are not same in capabilities from %(host)s'),
-                      {'node': self.nodename,
-                       'hvhn': self.capabilities.get('hypervisor_hostname'),
-                       'host': self.host})
-
-        if service is None:
-            service = {}
-        self.service = ReadOnlyDict(service)
         # Mutable available resources.
         # These will change as resources are virtually "consumed".
         self.total_usable_disk_gb = 0
@@ -144,12 +125,12 @@ class HostState(object):
 
         self.updated = None
 
-    def update_capabilities(self, topic, capabilities=None, service=None):
+    def update_capabilities(self, capabilities=None, service=None):
         # Read-only capability dicts
 
         if capabilities is None:
             capabilities = {}
-        self.capabilities = ReadOnlyDict(capabilities.get(topic, None))
+        self.capabilities = ReadOnlyDict(capabilities)
         if service is None:
             service = {}
         self.service = ReadOnlyDict(service)
@@ -285,11 +266,8 @@ class HostState(object):
         return True
 
     def __repr__(self):
-        host_node = self.host
-        if self.nodename is not None:
-            host_node = "%s/%s" % (self.host, self.nodename)
-        return ("%s ram:%s disk:%s io_ops:%s instances:%s vm_type:%s" %
-                (host_node, self.free_ram_mb, self.free_disk_mb,
+        return ("(%s, %s) ram:%s disk:%s io_ops:%s instances:%s vm_type:%s" %
+                (self.host, self.nodename, self.free_ram_mb, self.free_disk_mb,
                  self.num_io_ops, self.num_instances, self.allowed_vm_type))
 
 
@@ -300,10 +278,11 @@ class HostManager(object):
     host_state_cls = HostState
 
     def __init__(self):
-        self.service_states = {}  # { <host> : { <service> : { cap k : v }}}
+        # { (host, hypervisor_hostname) : { <service> : { cap k : v }}}
+        self.service_states = {}
         self.host_state_map = {}
         self.filter_classes = filters.get_filter_classes(
-                FLAGS.scheduler_available_filters)
+                CONF.scheduler_available_filters)
 
     def _choose_host_filters(self, filters):
         """Since the caller may specify which filters to use we need
@@ -312,7 +291,7 @@ class HostManager(object):
         of acceptable filters.
         """
         if filters is None:
-            filters = FLAGS.scheduler_default_filters
+            filters = CONF.scheduler_default_filters
         if not isinstance(filters, (list, tuple)):
             filters = [filters]
         good_filters = []
@@ -347,38 +326,25 @@ class HostManager(object):
 
     def update_service_capabilities(self, service_name, host, capabilities):
         """Update the per-service capabilities based on this notification."""
-        # services_states is always keyed by 'host/hypervisor_hostname'
-        # regardless of whether the service is multi-node or not.
-        nodename = capabilities.get('hypervisor_hostname')
-        if nodename is not None:
-            state_key = "%s/%s" % (host, nodename)
-        else:
-            state_key = host
+
+        if service_name != 'compute':
+            LOG.debug(_('Ignoring %(service_name)s service update '
+                    'from %(host)s'), locals())
+            return
+
+        state_key = (host, capabilities.get('hypervisor_hostname'))
         LOG.debug(_("Received %(service_name)s service update from "
                     "%(state_key)s.") % locals())
-        service_caps = self.service_states.get(state_key, {})
         # Copy the capabilities, so we don't modify the original dict
         capab_copy = dict(capabilities)
         capab_copy["timestamp"] = timeutils.utcnow()  # Reported time
-        service_caps[service_name] = capab_copy
-        self.service_states[state_key] = service_caps
+        self.service_states[state_key] = capab_copy
 
-    def get_all_host_states(self, context, topic):
-        """Returns a dict of all the hosts the HostManager
-        knows about. Also, each of the consumable resources in HostState
-        are pre-populated and adjusted based on data in the db.
-
-        For example:
-        {'192.168.1.100': HostState(), ...}
-
-        Note: this can be very slow with a lot of instances.
-        InstanceType table isn't required since a copy is stored
-        with the instance (in case the InstanceType changed since the
-        instance was created)."""
-
-        if topic != FLAGS.compute_topic:
-            raise NotImplementedError(_(
-                "host_manager only implemented for 'compute'"))
+    def get_all_host_states(self, context):
+        """Returns a list of HostStates that represents all the hosts
+        the HostManager knows about. Also, each of the consumable resources
+        in HostState are pre-populated and adjusted based on data in the db.
+        """
 
         # Get resource usage across the available compute nodes:
         compute_nodes = db.compute_node_get_all(context)
@@ -388,21 +354,18 @@ class HostManager(object):
                 LOG.warn(_("No service for compute ID %s") % compute['id'])
                 continue
             host = service['host']
-            nodename = compute.get('hypervisor_hostname')
-            if nodename is not None:
-                state_key = '%s/%s' % (host, nodename)
-            else:
-                state_key = host
+            node = compute.get('hypervisor_hostname')
+            state_key = (host, node)
             capabilities = self.service_states.get(state_key, None)
             host_state = self.host_state_map.get(state_key)
             if host_state:
-                host_state.update_capabilities(topic, capabilities,
+                host_state.update_capabilities(capabilities,
                                                dict(service.iteritems()))
             else:
-                host_state = self.host_state_cls(host, topic,
+                host_state = self.host_state_cls(host, node,
                         capabilities=capabilities,
                         service=dict(service.iteritems()))
                 self.host_state_map[state_key] = host_state
             host_state.update_from_compute_node(compute)
 
-        return self.host_state_map
+        return self.host_state_map.itervalues()

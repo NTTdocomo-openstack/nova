@@ -27,6 +27,8 @@ import re
 from nova.compute import api as compute_api
 from nova.compute import instance_types
 from nova.compute import power_state
+from nova.compute import task_states
+from nova.compute import vm_states
 from nova import context
 from nova import db
 from nova import exception
@@ -233,7 +235,6 @@ class XenAPIVolumeTestCase(stubs.XenAPITestBase):
         """This shows how to test Ops classes' methods."""
         stubs.stubout_session(self.stubs, stubs.FakeSessionForVolumeTests)
         conn = xenapi_conn.XenAPIDriver(fake.FakeVirtAPI(), False)
-        volume = self._create_volume()
         instance = db.instance_create(self.context, self.instance_values)
         vm = xenapi_fake.create_vm(instance.name, 'Running')
         result = conn.attach_volume(self._make_connection_info(),
@@ -251,7 +252,6 @@ class XenAPIVolumeTestCase(stubs.XenAPITestBase):
         stubs.stubout_session(self.stubs,
                               stubs.FakeSessionForVolumeFailedTests)
         conn = xenapi_conn.XenAPIDriver(fake.FakeVirtAPI(), False)
-        volume = self._create_volume()
         instance = db.instance_create(self.context, self.instance_values)
         xenapi_fake.create_vm(instance.name, 'Running')
         self.assertRaises(exception.VolumeDriverNotFound,
@@ -895,6 +895,37 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
         xenapi_fake.create_vm(instance.name, 'Unknown')
         self.assertRaises(xenapi_fake.Failure, conn.reboot, instance,
                 None, "SOFT")
+
+    def test_maintenance_mode(self):
+        real_call_xenapi = self.conn._session.call_xenapi
+        instance = self._create_instance(spawn=True)
+        api_calls = {}
+
+        # Record all the xenapi calls, and return a fake list of hosts
+        # for the host.get_all call
+        def fake_call_xenapi(method, *args):
+            api_calls[method] = args
+            if method == 'host.get_all':
+                return ['foo', 'bar', 'baz']
+            return real_call_xenapi(method, *args)
+        self.stubs.Set(self.conn._session, 'call_xenapi', fake_call_xenapi)
+
+        # Always find the 'bar' destination host
+        def fake_host_find(context, session, src, dst):
+            return 'bar'
+        self.stubs.Set(host, '_host_find', fake_host_find)
+
+        result = self.conn.host_maintenance_mode('bar', 'on_maintenance')
+        self.assertEqual(result, 'on_maintenance')
+
+        # We expect the VM.pool_migrate call to have been called to
+        # migrate our instance to the 'bar' host
+        expected = (instance['uuid'], 'bar', {})
+        self.assertTrue(api_calls.get('VM.pool_migrate'), expected)
+
+        instance = db.instance_get_by_uuid(self.context, instance['uuid'])
+        self.assertTrue(instance['vm_state'], vm_states.ACTIVE)
+        self.assertTrue(instance['task_state'], task_states.MIGRATING)
 
     def _create_instance(self, instance_id=1, spawn=True):
         """Creates and spawns a test instance."""
@@ -2241,7 +2272,8 @@ class XenAPIAggregateTestCase(stubs.XenAPITestBase):
 
         self.assertRaises(exception.AggregateError,
                           self.compute.add_aggregate_host,
-                          self.context, self.aggr.id, "fake_host")
+                          self.context, "fake_host",
+                          aggregate=jsonutils.to_primitive(self.aggr))
         excepted = db.aggregate_get(self.context, self.aggr.id)
         self.assertEqual(excepted.metadetails[pool_states.KEY],
                 pool_states.ERROR)
@@ -2258,10 +2290,10 @@ class MockComputeAPI(object):
     def __init__(self):
         self._mock_calls = []
 
-    def add_aggregate_host(self, ctxt, aggregate_id,
+    def add_aggregate_host(self, ctxt, aggregate,
                                      host_param, host, slave_info):
         self._mock_calls.append((
-            self.add_aggregate_host, ctxt, aggregate_id,
+            self.add_aggregate_host, ctxt, aggregate,
             host_param, host, slave_info))
 
     def remove_aggregate_host(self, ctxt, aggregate_id, host_param,
@@ -2304,7 +2336,8 @@ class HypervisorPoolTestCase(test.TestCase):
 
         self.assertIn(
             (slave.compute_rpcapi.add_aggregate_host,
-            "CONTEXT", 98, "slave", "master", "SLAVE_INFO"),
+            "CONTEXT", jsonutils.to_primitive(aggregate),
+            "slave", "master", "SLAVE_INFO"),
             slave.compute_rpcapi._mock_calls)
 
     def test_slave_asks_master_to_remove_slave_from_pool(self):

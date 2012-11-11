@@ -59,9 +59,6 @@ db_opts = [
     cfg.StrOpt('instance_name_template',
                default='instance-%08x',
                help='Template string to be used to generate instance names'),
-    cfg.StrOpt('volume_name_template',
-               default='volume-%s',
-               help='Template string to be used to generate instance names'),
     cfg.StrOpt('snapshot_name_template',
                default='snapshot-%s',
                help='Template string to be used to generate snapshot names'),
@@ -155,15 +152,6 @@ def service_get_all_compute_sorted(context):
 
     """
     return IMPL.service_get_all_compute_sorted(context)
-
-
-def service_get_all_volume_sorted(context):
-    """Get all volume services sorted by volume count.
-
-    :returns: a list of (Service, volume_count) tuples.
-
-    """
-    return IMPL.service_get_all_volume_sorted(context)
 
 
 def service_get_by_args(context, host, binary):
@@ -626,6 +614,11 @@ def instance_get_all_by_host(context, host):
     return IMPL.instance_get_all_by_host(context, host)
 
 
+def instance_get_all_by_host_and_node(context, host, node):
+    """Get all instances belonging to a node."""
+    return IMPL.instance_get_all_by_host_and_node(context, host, node)
+
+
 def instance_get_all_by_host_and_not_type(context, host, type_id=None):
     """Get all instances belonging to a host with a different type_id."""
     return IMPL.instance_get_all_by_host_and_not_type(context, host, type_id)
@@ -748,11 +741,6 @@ def key_pair_destroy(context, user_id, name):
     return IMPL.key_pair_destroy(context, user_id, name)
 
 
-def key_pair_destroy_all_by_user(context, user_id):
-    """Destroy all key_pairs by user."""
-    return IMPL.key_pair_destroy_all_by_user(context, user_id)
-
-
 def key_pair_get(context, user_id, name):
     """Get a key_pair or raise if it does not exist."""
     return IMPL.key_pair_get(context, user_id, name)
@@ -774,11 +762,6 @@ def key_pair_count_by_user(context, user_id):
 def network_associate(context, project_id, network_id=None, force=False):
     """Associate a free network to a project."""
     return IMPL.network_associate(context, project_id, network_id, force)
-
-
-def network_count(context):
-    """Return the number of networks."""
-    return IMPL.network_count(context)
 
 
 def network_count_reserved_ips(context, network_id):
@@ -803,11 +786,6 @@ def network_delete_safe(context, network_id):
 
     """
     return IMPL.network_delete_safe(context, network_id)
-
-
-def network_create_fixed_ips(context, network_id, num_vpn_clients):
-    """Create the ips for the network, reserving sepecified ips."""
-    return IMPL.network_create_fixed_ips(context, network_id, num_vpn_clients)
 
 
 def network_disassociate(context, network_id):
@@ -870,16 +848,6 @@ def network_get_all_by_host(context, host):
     return IMPL.network_get_all_by_host(context, host)
 
 
-def network_get_index(context, network_id):
-    """Get non-conflicting index for network."""
-    return IMPL.network_get_index(context, network_id)
-
-
-def network_set_cidr(context, network_id, cidr):
-    """Set the Classless Inner Domain Routing for the network."""
-    return IMPL.network_set_cidr(context, network_id, cidr)
-
-
 def network_set_host(context, network_id, host_id):
     """Safely set the host for network."""
     return IMPL.network_set_host(context, network_id, host_id)
@@ -936,11 +904,6 @@ def quota_update(context, project_id, resource, limit):
     return IMPL.quota_update(context, project_id, resource, limit)
 
 
-def quota_destroy(context, project_id, resource):
-    """Destroy the quota or raise if it does not exist."""
-    return IMPL.quota_destroy(context, project_id, resource)
-
-
 ###################
 
 
@@ -962,16 +925,6 @@ def quota_class_get_all_by_name(context, class_name):
 def quota_class_update(context, class_name, resource, limit):
     """Update a quota class or raise if it does not exist."""
     return IMPL.quota_class_update(context, class_name, resource, limit)
-
-
-def quota_class_destroy(context, class_name, resource):
-    """Destroy the quota class or raise if it does not exist."""
-    return IMPL.quota_class_destroy(context, class_name, resource)
-
-
-def quota_class_destroy_all_by_name(context, class_name):
-    """Destroy all quotas associated with a given quota class."""
-    return IMPL.quota_class_destroy_all_by_name(context, class_name)
 
 
 ###################
@@ -999,11 +952,6 @@ def quota_usage_update(context, project_id, resource, **kwargs):
     return IMPL.quota_usage_update(context, project_id, resource, **kwargs)
 
 
-def quota_usage_destroy(context, project_id, resource):
-    """Destroy the quota usage or raise if it does not exist."""
-    return IMPL.quota_usage_destroy(context, project_id, resource)
-
-
 ###################
 
 
@@ -1017,11 +965,6 @@ def reservation_create(context, uuid, usage, project_id, resource, delta,
 def reservation_get(context, uuid):
     """Retrieve a reservation or raise if it does not exist."""
     return IMPL.reservation_get(context, uuid)
-
-
-def reservation_get_all_by_project(context, project_id):
-    """Retrieve all reservations associated with a given project."""
-    return IMPL.reservation_get_all_by_project(context, project_id)
 
 
 def reservation_destroy(context, uuid):
@@ -1062,79 +1005,9 @@ def reservation_expire(context):
 ###################
 
 
-def volume_allocate_iscsi_target(context, volume_id, host):
-    """Atomically allocate a free iscsi_target from the pool."""
-    return IMPL.volume_allocate_iscsi_target(context, volume_id, host)
-
-
-def volume_attached(context, volume_id, instance_id, mountpoint):
-    """Ensure that a volume is set as attached."""
-    return IMPL.volume_attached(context, volume_id, instance_id, mountpoint)
-
-
-def volume_create(context, values):
-    """Create a volume from the values dictionary."""
-    return IMPL.volume_create(context, values)
-
-
-def volume_data_get_for_project(context, project_id, session=None):
-    """Get (volume_count, gigabytes) for project."""
-    return IMPL.volume_data_get_for_project(context, project_id,
-                                            session=session)
-
-
-def volume_destroy(context, volume_id):
-    """Destroy the volume or raise if it does not exist."""
-    return IMPL.volume_destroy(context, volume_id)
-
-
-def volume_detached(context, volume_id):
-    """Ensure that a volume is set as detached."""
-    return IMPL.volume_detached(context, volume_id)
-
-
-def volume_get(context, volume_id):
-    """Get a volume or raise if it does not exist."""
-    return IMPL.volume_get(context, volume_id)
-
-
-def volume_get_all(context):
-    """Get all volumes."""
-    return IMPL.volume_get_all(context)
-
-
-def volume_get_all_by_host(context, host):
-    """Get all volumes belonging to a host."""
-    return IMPL.volume_get_all_by_host(context, host)
-
-
-def volume_get_all_by_instance_uuid(context, instance_uuid):
-    """Get all volumes belonging to an instance."""
-    return IMPL.volume_get_all_by_instance_uuid(context, instance_uuid)
-
-
-def volume_get_all_by_project(context, project_id):
-    """Get all volumes belonging to a project."""
-    return IMPL.volume_get_all_by_project(context, project_id)
-
-
-def volume_get_by_ec2_id(context, ec2_id):
-    """Get a volume by ec2 id."""
-    return IMPL.volume_get_by_ec2_id(context, ec2_id)
-
-
 def volume_get_iscsi_target_num(context, volume_id):
     """Get the target num (tid) allocated to the volume."""
     return IMPL.volume_get_iscsi_target_num(context, volume_id)
-
-
-def volume_update(context, volume_id, values):
-    """Set the given properties on a volume and update it.
-
-    Raises NotFound if volume does not exist.
-
-    """
-    return IMPL.volume_update(context, volume_id, values)
 
 
 def get_ec2_volume_id_by_uuid(context, volume_id):
@@ -1159,48 +1032,6 @@ def get_ec2_snapshot_id_by_uuid(context, snapshot_id):
 
 def ec2_snapshot_create(context, snapshot_id, forced_id=None):
     return IMPL.ec2_snapshot_create(context, snapshot_id, forced_id)
-
-
-####################
-
-
-def snapshot_create(context, values):
-    """Create a snapshot from the values dictionary."""
-    return IMPL.snapshot_create(context, values)
-
-
-def snapshot_destroy(context, snapshot_id):
-    """Destroy the snapshot or raise if it does not exist."""
-    return IMPL.snapshot_destroy(context, snapshot_id)
-
-
-def snapshot_get(context, snapshot_id):
-    """Get a snapshot or raise if it does not exist."""
-    return IMPL.snapshot_get(context, snapshot_id)
-
-
-def snapshot_get_all(context):
-    """Get all snapshots."""
-    return IMPL.snapshot_get_all(context)
-
-
-def snapshot_get_all_by_project(context, project_id):
-    """Get all snapshots belonging to a project."""
-    return IMPL.snapshot_get_all_by_project(context, project_id)
-
-
-def snapshot_get_all_for_volume(context, volume_id):
-    """Get all snapshots for a volume."""
-    return IMPL.snapshot_get_all_for_volume(context, volume_id)
-
-
-def snapshot_update(context, snapshot_id, values):
-    """Set the given properties on a snapshot and update it.
-
-    Raises NotFound if snapshot does not exist.
-
-    """
-    return IMPL.snapshot_update(context, snapshot_id, values)
 
 
 ####################
@@ -1503,11 +1334,6 @@ def instance_system_metadata_get(context, instance_uuid):
     return IMPL.instance_system_metadata_get(context, instance_uuid)
 
 
-def instance_system_metadata_delete(context, instance_uuid, key):
-    """Delete the given system metadata item."""
-    IMPL.instance_system_metadata_delete(context, instance_uuid, key)
-
-
 def instance_system_metadata_update(context, instance_uuid, metadata, delete):
     """Update metadata if it exists, otherwise create it."""
     IMPL.instance_system_metadata_update(
@@ -1586,80 +1412,6 @@ def instance_type_extra_specs_update_or_create(context, flavor_id,
                                                     extra_specs)
 
 
-##################
-
-
-def volume_metadata_get(context, volume_id):
-    """Get all metadata for a volume."""
-    return IMPL.volume_metadata_get(context, volume_id)
-
-
-def volume_metadata_delete(context, volume_id, key):
-    """Delete the given metadata item."""
-    IMPL.volume_metadata_delete(context, volume_id, key)
-
-
-def volume_metadata_update(context, volume_id, metadata, delete):
-    """Update metadata if it exists, otherwise create it."""
-    IMPL.volume_metadata_update(context, volume_id, metadata, delete)
-
-
-##################
-
-
-def volume_type_create(context, values):
-    """Create a new volume type."""
-    return IMPL.volume_type_create(context, values)
-
-
-def volume_type_get_all(context, inactive=False):
-    """Get all volume types."""
-    return IMPL.volume_type_get_all(context, inactive)
-
-
-def volume_type_get(context, id):
-    """Get volume type by id."""
-    return IMPL.volume_type_get(context, id)
-
-
-def volume_type_get_by_name(context, name):
-    """Get volume type by name."""
-    return IMPL.volume_type_get_by_name(context, name)
-
-
-def volume_type_destroy(context, name):
-    """Delete a volume type."""
-    return IMPL.volume_type_destroy(context, name)
-
-
-def volume_get_active_by_window(context, begin, end=None, project_id=None):
-    """Get all the volumes inside the window.
-
-    Specifying a project_id will filter for a certain project."""
-    return IMPL.volume_get_active_by_window(context, begin, end, project_id)
-
-
-####################
-
-
-def volume_type_extra_specs_get(context, volume_type_id):
-    """Get all extra specs for a volume type."""
-    return IMPL.volume_type_extra_specs_get(context, volume_type_id)
-
-
-def volume_type_extra_specs_delete(context, volume_type_id, key):
-    """Delete the given extra specs item."""
-    IMPL.volume_type_extra_specs_delete(context, volume_type_id, key)
-
-
-def volume_type_extra_specs_update_or_create(context, volume_type_id,
-                                               extra_specs):
-    """Create or update volume type extra specs. This adds or modifies the
-    key/value pairs specified in the extra specs dict argument"""
-    IMPL.volume_type_extra_specs_update_or_create(context, volume_type_id,
-                                                    extra_specs)
-
-
 ###################
 
 
@@ -1676,100 +1428,6 @@ def s3_image_get_by_uuid(context, image_uuid):
 def s3_image_create(context, image_uuid):
     """Create local s3 image represented by provided uuid"""
     return IMPL.s3_image_create(context, image_uuid)
-
-
-####################
-
-
-def sm_backend_conf_create(context, values):
-    """Create a new SM Backend Config entry."""
-    return IMPL.sm_backend_conf_create(context, values)
-
-
-def sm_backend_conf_update(context, sm_backend_conf_id, values):
-    """Update a SM Backend Config entry."""
-    return IMPL.sm_backend_conf_update(context, sm_backend_conf_id, values)
-
-
-def sm_backend_conf_delete(context, sm_backend_conf_id):
-    """Delete a SM Backend Config."""
-    return IMPL.sm_backend_conf_delete(context, sm_backend_conf_id)
-
-
-def sm_backend_conf_get(context, sm_backend_conf_id):
-    """Get a specific SM Backend Config."""
-    return IMPL.sm_backend_conf_get(context, sm_backend_conf_id)
-
-
-def sm_backend_conf_get_by_sr(context, sr_uuid):
-    """Get a specific SM Backend Config."""
-    return IMPL.sm_backend_conf_get_by_sr(context, sr_uuid)
-
-
-def sm_backend_conf_get_all(context):
-    """Get all SM Backend Configs."""
-    return IMPL.sm_backend_conf_get_all(context)
-
-
-####################
-
-
-def sm_flavor_create(context, values):
-    """Create a new SM Flavor entry."""
-    return IMPL.sm_flavor_create(context, values)
-
-
-def sm_flavor_update(context, sm_flavor_id, values):
-    """Update a SM Flavor entry."""
-    return IMPL.sm_flavor_update(context, sm_flavor_id, values)
-
-
-def sm_flavor_delete(context, sm_flavor_id):
-    """Delete a SM Flavor."""
-    return IMPL.sm_flavor_delete(context, sm_flavor_id)
-
-
-def sm_flavor_get(context, sm_flavor_id):
-    """Get a specific SM Flavor."""
-    return IMPL.sm_flavor_get(context, sm_flavor_id)
-
-
-def sm_flavor_get_all(context):
-    """Get all SM Flavors."""
-    return IMPL.sm_flavor_get_all(context)
-
-
-def sm_flavor_get_by_label(context, sm_flavor_label):
-    """Get a specific SM Flavor given label."""
-    return IMPL.sm_flavor_get_by_label(context, sm_flavor_label)
-
-
-####################
-
-
-def sm_volume_create(context, values):
-    """Create a new child Zone entry."""
-    return IMPL.sm_volume_create(context, values)
-
-
-def sm_volume_update(context, volume_id, values):
-    """Update a child Zone entry."""
-    return IMPL.sm_volume_update(context, values)
-
-
-def sm_volume_delete(context, volume_id):
-    """Delete a child Zone."""
-    return IMPL.sm_volume_delete(context, volume_id)
-
-
-def sm_volume_get(context, volume_id):
-    """Get a specific child Zone."""
-    return IMPL.sm_volume_get(context, volume_id)
-
-
-def sm_volume_get_all(context):
-    """Get all child Zones."""
-    return IMPL.sm_volume_get_all(context)
 
 
 ####################

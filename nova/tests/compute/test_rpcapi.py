@@ -95,8 +95,9 @@ class ComputeRpcAPITestCase(test.TestCase):
             self.assertEqual(arg, expected_arg)
 
     def test_add_aggregate_host(self):
-        self._test_compute_api('add_aggregate_host', 'cast', aggregate_id='id',
-                host_param='host', host='host', slave_info={}, version='2.2')
+        self._test_compute_api('add_aggregate_host', 'cast',
+                aggregate={'id': 'fake_id'}, host_param='host', host='host',
+                slave_info={}, version='2.14')
 
     def test_add_fixed_ip_to_instance(self):
         self._test_compute_api('add_fixed_ip_to_instance', 'cast',
@@ -143,8 +144,8 @@ class ComputeRpcAPITestCase(test.TestCase):
 
     def test_finish_revert_resize(self):
         self._test_compute_api('finish_revert_resize', 'cast',
-                instance=self.fake_instance, migration_id='id', host='host',
-                reservations=list('fake_res'))
+                instance=self.fake_instance, migration={'id': 'fake_id'},
+                host='host', reservations=list('fake_res'), version='2.13')
 
     def test_get_console_output(self):
         self._test_compute_api('get_console_output', 'call',
@@ -263,8 +264,8 @@ class ComputeRpcAPITestCase(test.TestCase):
 
     def test_remove_aggregate_host(self):
         self._test_compute_api('remove_aggregate_host', 'cast',
-                aggregate_id='id', host_param='host', host='host',
-                slave_info={}, version='2.2')
+                aggregate={'id': 'fake_id'}, host_param='host', host='host',
+                slave_info={}, version='2.15')
 
     def test_remove_fixed_ip_from_instance(self):
         self._test_compute_api('remove_fixed_ip_from_instance', 'cast',
@@ -285,7 +286,8 @@ class ComputeRpcAPITestCase(test.TestCase):
     def test_resize_instance(self):
         self._test_compute_api('resize_instance', 'cast',
                 instance=self.fake_instance, migration={'id': 'fake_id'},
-                image='image', reservations=list('fake_res'), version='2.6')
+                image='image', instance_type={'id': 1},
+                reservations=list('fake_res'), version='2.16')
 
     def test_resume_instance(self):
         self._test_compute_api('resume_instance', 'cast',
@@ -293,8 +295,8 @@ class ComputeRpcAPITestCase(test.TestCase):
 
     def test_revert_resize(self):
         self._test_compute_api('revert_resize', 'cast',
-                instance=self.fake_instance, migration_id='id', host='host',
-                reservations=list('fake_res'))
+                instance=self.fake_instance, migration={'id': 'fake_id'},
+                host='host', reservations=list('fake_res'), version='2.12')
 
     def test_rollback_live_migration_at_destination(self):
         self._test_compute_api('rollback_live_migration_at_destination',

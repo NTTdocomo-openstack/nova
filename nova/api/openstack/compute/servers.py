@@ -30,17 +30,19 @@ from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
 from nova import compute
 from nova.compute import instance_types
+from nova import config
 from nova import exception
 from nova import flags
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 from nova.openstack.common.rpc import common as rpc_common
 from nova.openstack.common import timeutils
+from nova.openstack.common import uuidutils
 from nova import utils
 
 
 LOG = logging.getLogger(__name__)
-FLAGS = flags.FLAGS
+CONF = config.CONF
 
 
 def make_fault(elem):
@@ -602,7 +604,7 @@ class Controller(wsgi.Controller):
             self.quantum_attempted = True
             from nova.network.quantumv2 import api as quantum_api
             self.have_quantum = issubclass(
-                importutils.import_class(FLAGS.network_api_class),
+                importutils.import_class(CONF.network_api_class),
                 quantum_api.API)
         except ImportError:
             self.have_quantum = False
@@ -621,7 +623,7 @@ class Controller(wsgi.Controller):
                         # port parameter is only for qunatum v2.0
                         msg = _("Unknown argment : port")
                         raise exc.HTTPBadRequest(explanation=msg)
-                    if not utils.is_uuid_like(port_id):
+                    if not uuidutils.is_uuid_like(port_id):
                         msg = _("Bad port format: port uuid is "
                                 "not in proper format "
                                 "(%s)") % port_id
@@ -629,9 +631,9 @@ class Controller(wsgi.Controller):
                 else:
                     network_uuid = network['uuid']
 
-                if not port_id and not utils.is_uuid_like(network_uuid):
+                if not port_id and not uuidutils.is_uuid_like(network_uuid):
                     br_uuid = network_uuid.split('-', 1)[-1]
-                    if not utils.is_uuid_like(br_uuid):
+                    if not uuidutils.is_uuid_like(br_uuid):
                         msg = _("Bad networks format: network uuid is "
                                 "not in proper format "
                                 "(%s)") % network_uuid
@@ -920,7 +922,7 @@ class Controller(wsgi.Controller):
         if '_is_precooked' in server['server'].keys():
             del server['server']['_is_precooked']
         else:
-            if FLAGS.enable_instance_password:
+            if CONF.enable_instance_password:
                 server['server']['adminPass'] = password
 
         robj = wsgi.ResponseObject(server)
@@ -929,7 +931,7 @@ class Controller(wsgi.Controller):
 
     def _delete(self, context, req, instance_uuid):
         instance = self._get_server(context, req, instance_uuid)
-        if FLAGS.reclaim_instance_interval:
+        if CONF.reclaim_instance_interval:
             self.compute_api.soft_delete(context, instance)
         else:
             self.compute_api.delete(context, instance)
@@ -1099,7 +1101,7 @@ class Controller(wsgi.Controller):
         # down to an id and use the default glance connection params
         image_uuid = image_href.split('/').pop()
 
-        if not utils.is_uuid_like(image_uuid):
+        if not uuidutils.is_uuid_like(image_uuid):
             msg = _("Invalid imageRef provided.")
             raise exc.HTTPBadRequest(explanation=msg)
 
@@ -1184,7 +1186,7 @@ class Controller(wsgi.Controller):
         try:
             password = body['adminPass']
         except (KeyError, TypeError):
-            password = utils.generate_password(FLAGS.password_length)
+            password = utils.generate_password(CONF.password_length)
 
         context = req.environ['nova.context']
         instance = self._get_server(context, req, id)
@@ -1252,7 +1254,7 @@ class Controller(wsgi.Controller):
 
         # Add on the adminPass attribute since the view doesn't do it
         # unless instance passwords are disabled
-        if FLAGS.enable_instance_password:
+        if CONF.enable_instance_password:
             view['server']['adminPass'] = password
 
         robj = wsgi.ResponseObject(view)
@@ -1326,7 +1328,7 @@ class Controller(wsgi.Controller):
             password = server['adminPass']
             self._validate_admin_password(password)
         except KeyError:
-            password = utils.generate_password(FLAGS.password_length)
+            password = utils.generate_password(CONF.password_length)
         except ValueError:
             raise exc.HTTPBadRequest(explanation=_("Invalid adminPass"))
 

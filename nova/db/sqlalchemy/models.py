@@ -250,7 +250,11 @@ class Instance(BASE, NovaBase):
     ephemeral_gb = Column(Integer)
 
     hostname = Column(String(255))
+    # To identify the "Service" which the instance resides in.
     host = Column(String(255))  # , ForeignKey('hosts.id'))
+    # To identify the "ComputeNode" which the instance resides in.
+    # This equals to ComputeNode.hypervisor_hostname.
+    node = Column(String(255))
 
     # *not* flavor_id
     instance_type_id = Column(Integer)
@@ -382,49 +386,6 @@ class Volume(BASE, NovaBase):
     provider_auth = Column(String(255))
 
     volume_type_id = Column(Integer)
-
-
-class VolumeMetadata(BASE, NovaBase):
-    """Represents a metadata key/value pair for a volume"""
-    __tablename__ = 'volume_metadata'
-    id = Column(Integer, primary_key=True)
-    key = Column(String(255))
-    value = Column(String(255))
-    volume_id = Column(String(36), ForeignKey('volumes.id'), nullable=False)
-    volume = relationship(Volume, backref="volume_metadata",
-                            foreign_keys=volume_id,
-                            primaryjoin='and_('
-                                'VolumeMetadata.volume_id == Volume.id,'
-                                'VolumeMetadata.deleted == False)')
-
-
-class VolumeTypes(BASE, NovaBase):
-    """Represent possible volume_types of volumes offered"""
-    __tablename__ = "volume_types"
-    id = Column(Integer, primary_key=True)
-    name = Column(String(255))
-
-    volumes = relationship(Volume,
-                           backref=backref('volume_type', uselist=False),
-                           foreign_keys=id,
-                           primaryjoin='and_('
-                               'Volume.volume_type_id == VolumeTypes.id, '
-                               'VolumeTypes.deleted == False)')
-
-
-class VolumeTypeExtraSpecs(BASE, NovaBase):
-    """Represents additional specs as key/value pairs for a volume_type"""
-    __tablename__ = 'volume_type_extra_specs'
-    id = Column(Integer, primary_key=True)
-    key = Column(String(255))
-    value = Column(String(255))
-    volume_type_id = Column(Integer, ForeignKey('volume_types.id'),
-                              nullable=False)
-    volume_type = relationship(VolumeTypes, backref="extra_specs",
-                 foreign_keys=volume_type_id,
-                 primaryjoin='and_('
-                 'VolumeTypeExtraSpecs.volume_type_id == VolumeTypes.id,'
-                 'VolumeTypeExtraSpecs.deleted == False)')
 
 
 class Quota(BASE, NovaBase):
@@ -959,32 +920,6 @@ class SnapshotIdMapping(BASE, NovaBase):
     __tablename__ = 'snapshot_id_mappings'
     id = Column(Integer, primary_key=True, nullable=False, autoincrement=True)
     uuid = Column(String(36), nullable=False)
-
-
-class SMFlavors(BASE, NovaBase):
-    """Represents a flavor for SM volumes."""
-    __tablename__ = 'sm_flavors'
-    id = Column(Integer(), primary_key=True)
-    label = Column(String(255))
-    description = Column(String(255))
-
-
-class SMBackendConf(BASE, NovaBase):
-    """Represents the connection to the backend for SM."""
-    __tablename__ = 'sm_backend_config'
-    id = Column(Integer(), primary_key=True)
-    flavor_id = Column(Integer, ForeignKey('sm_flavors.id'), nullable=False)
-    sr_uuid = Column(String(255))
-    sr_type = Column(String(255))
-    config_params = Column(String(2047))
-
-
-class SMVolume(BASE, NovaBase):
-    __tablename__ = 'sm_volume'
-    id = Column(String(36), ForeignKey(Volume.id), primary_key=True)
-    backend_id = Column(Integer, ForeignKey('sm_backend_config.id'),
-                        nullable=False)
-    vdi_uuid = Column(String(255))
 
 
 class InstanceFault(BASE, NovaBase):

@@ -36,6 +36,7 @@ from nova.compute import rpcapi as compute_rpcapi
 from nova.compute import task_states
 from nova.compute import utils as compute_utils
 from nova.compute import vm_states
+from nova import config
 from nova import context
 from nova import db
 from nova import exception
@@ -60,16 +61,20 @@ from nova.tests import fake_network
 from nova.tests import fake_network_cache_model
 from nova.tests.image import fake as fake_image
 from nova import utils
+from nova.virt import fake
 from nova.volume import cinder
 
 
 QUOTAS = quota.QUOTAS
 LOG = logging.getLogger(__name__)
 FLAGS = flags.FLAGS
-flags.DECLARE('live_migration_retry_count', 'nova.compute.manager')
+CONF = config.CONF
+CONF.import_opt('live_migration_retry_count', 'nova.compute.manager')
 
 
 FAKE_IMAGE_REF = 'fake-image-ref'
+
+NODENAME = 'fakenode1'
 
 
 def nop_report_driver_status(self):
@@ -99,12 +104,13 @@ class BaseTestCase(test.TestCase):
         self.flags(compute_driver='nova.virt.fake.FakeDriver',
                    notification_driver=[test_notifier.__name__],
                    network_manager='nova.network.manager.FlatManager')
+        fake.set_nodes([NODENAME])
         self.compute = importutils.import_object(FLAGS.compute_manager)
 
         # override tracker with a version that doesn't need the database:
         fake_rt = fake_resource_tracker.FakeResourceTracker(self.compute.host,
-                    self.compute.driver)
-        self.compute._resource_tracker_dict[None] = fake_rt
+                    self.compute.driver, NODENAME)
+        self.compute._resource_tracker_dict[NODENAME] = fake_rt
         self.compute.update_available_resource(
                 context.get_admin_context())
 
@@ -135,6 +141,7 @@ class BaseTestCase(test.TestCase):
         notifier_api._reset_drivers()
         for instance in instances:
             db.instance_destroy(self.context.elevated(), instance['uuid'])
+        fake.restore_nodes()
         super(BaseTestCase, self).tearDown()
 
     def _create_fake_instance(self, params=None, type_name='m1.tiny'):
@@ -150,6 +157,7 @@ class BaseTestCase(test.TestCase):
         inst['user_id'] = self.user_id
         inst['project_id'] = self.project_id
         inst['host'] = 'fake_host'
+        inst['node'] = NODENAME
         type_id = instance_types.get_instance_type_by_name(type_name)['id']
         inst['instance_type_id'] = type_id
         inst['ami_launch_index'] = 0
@@ -208,7 +216,7 @@ class ComputeTestCase(BaseTestCase):
                        fake_get_nw_info)
         self.compute_api = compute.API()
         # Just to make long lines short
-        self.rt = self.compute._get_resource_tracker(nodename=None)
+        self.rt = self.compute._get_resource_tracker(NODENAME)
 
     def tearDown(self):
         super(ComputeTestCase, self).tearDown()
@@ -307,20 +315,17 @@ class ComputeTestCase(BaseTestCase):
     def test_create_instance_unlimited_memory(self):
         """Default of memory limit=None is unlimited"""
         self.flags(reserved_host_disk_mb=0, reserved_host_memory_mb=0)
-        self.rt.update_available_resource(
-                self.context.elevated())
+        self.rt.update_available_resource(self.context.elevated())
         params = {"memory_mb": 999999999999}
         filter_properties = {'limits': {'memory_mb': None}}
         instance = self._create_fake_instance(params)
         self.compute.run_instance(self.context, instance=instance,
                 filter_properties=filter_properties)
-        self.assertEqual(999999999999,
-                self.rt.compute_node['memory_mb_used'])
+        self.assertEqual(999999999999, self.rt.compute_node['memory_mb_used'])
 
     def test_create_instance_unlimited_disk(self):
         self.flags(reserved_host_disk_mb=0, reserved_host_memory_mb=0)
-        self.rt.update_available_resource(
-                self.context.elevated())
+        self.rt.update_available_resource(self.context.elevated())
         params = {"root_gb": 999999999999,
                   "ephemeral_gb": 99999999999}
         filter_properties = {'limits': {'disk_gb': None}}
@@ -330,26 +335,21 @@ class ComputeTestCase(BaseTestCase):
 
     def test_create_multiple_instances_then_starve(self):
         self.flags(reserved_host_disk_mb=0, reserved_host_memory_mb=0)
-        self.rt.update_available_resource(
-                self.context.elevated())
+        self.rt.update_available_resource(self.context.elevated())
         filter_properties = {'limits': {'memory_mb': 4096, 'disk_gb': 1000}}
         params = {"memory_mb": 1024, "root_gb": 128, "ephemeral_gb": 128}
         instance = self._create_fake_instance(params)
         self.compute.run_instance(self.context, instance=instance,
                                   filter_properties=filter_properties)
-        self.assertEquals(1024,
-                self.rt.compute_node['memory_mb_used'])
-        self.assertEquals(256,
-                self.rt.compute_node['local_gb_used'])
+        self.assertEquals(1024, self.rt.compute_node['memory_mb_used'])
+        self.assertEquals(256, self.rt.compute_node['local_gb_used'])
 
         params = {"memory_mb": 2048, "root_gb": 256, "ephemeral_gb": 256}
         instance = self._create_fake_instance(params)
         self.compute.run_instance(self.context, instance=instance,
                                   filter_properties=filter_properties)
-        self.assertEquals(3072,
-                self.rt.compute_node['memory_mb_used'])
-        self.assertEquals(768,
-                self.rt.compute_node['local_gb_used'])
+        self.assertEquals(3072, self.rt.compute_node['memory_mb_used'])
+        self.assertEquals(768, self.rt.compute_node['local_gb_used'])
 
         params = {"memory_mb": 8192, "root_gb": 8192, "ephemeral_gb": 8192}
         instance = self._create_fake_instance(params)
@@ -361,11 +361,10 @@ class ComputeTestCase(BaseTestCase):
         """Test passing of oversubscribed ram policy from the scheduler."""
 
         self.flags(reserved_host_disk_mb=0, reserved_host_memory_mb=0)
-        self.rt.update_available_resource(
-                self.context.elevated())
+        self.rt.update_available_resource(self.context.elevated())
 
         # get total memory as reported by virt driver:
-        resources = self.compute.driver.get_available_resource()
+        resources = self.compute.driver.get_available_resource(NODENAME)
         total_mem_mb = resources['memory_mb']
 
         oversub_limit_mb = total_mem_mb * 1.5
@@ -382,19 +381,17 @@ class ComputeTestCase(BaseTestCase):
         self.compute.run_instance(self.context, instance=instance,
                 filter_properties=filter_properties)
 
-        self.assertEqual(instance_mb,
-                self.rt.compute_node['memory_mb_used'])
+        self.assertEqual(instance_mb, self.rt.compute_node['memory_mb_used'])
 
     def test_create_instance_with_oversubscribed_ram_fail(self):
         """Test passing of oversubscribed ram policy from the scheduler, but
         with insufficient memory.
         """
         self.flags(reserved_host_disk_mb=0, reserved_host_memory_mb=0)
-        self.rt.update_available_resource(
-                self.context.elevated())
+        self.rt.update_available_resource(self.context.elevated())
 
         # get total memory as reported by virt driver:
-        resources = self.compute.driver.get_available_resource()
+        resources = self.compute.driver.get_available_resource(NODENAME)
         total_mem_mb = resources['memory_mb']
 
         oversub_limit_mb = total_mem_mb * 1.5
@@ -416,13 +413,12 @@ class ComputeTestCase(BaseTestCase):
         """Test passing of oversubscribed cpu policy from the scheduler."""
 
         self.flags(reserved_host_disk_mb=0, reserved_host_memory_mb=0)
-        self.rt.update_available_resource(
-                self.context.elevated())
+        self.rt.update_available_resource(self.context.elevated())
         limits = {'vcpu': 3}
         filter_properties = {'limits': limits}
 
         # get total memory as reported by virt driver:
-        resources = self.compute.driver.get_available_resource()
+        resources = self.compute.driver.get_available_resource(NODENAME)
         self.assertEqual(1, resources['vcpus'])
 
         # build an instance, specifying an amount of memory that exceeds
@@ -433,8 +429,7 @@ class ComputeTestCase(BaseTestCase):
         self.compute.run_instance(self.context, instance=instance,
                 filter_properties=filter_properties)
 
-        self.assertEqual(2,
-                self.rt.compute_node['vcpus_used'])
+        self.assertEqual(2, self.rt.compute_node['vcpus_used'])
 
         # create one more instance:
         params = {"memory_mb": 10, "root_gb": 1,
@@ -443,16 +438,14 @@ class ComputeTestCase(BaseTestCase):
         self.compute.run_instance(self.context, instance=instance,
                 filter_properties=filter_properties)
 
-        self.assertEqual(3,
-                self.rt.compute_node['vcpus_used'])
+        self.assertEqual(3, self.rt.compute_node['vcpus_used'])
 
         # delete the instance:
         instance['vm_state'] = vm_states.DELETED
         self.rt.update_usage(self.context,
                 instance=instance)
 
-        self.assertEqual(2,
-                self.rt.compute_node['vcpus_used'])
+        self.assertEqual(2, self.rt.compute_node['vcpus_used'])
 
         # now oversubscribe vcpus and fail:
         params = {"memory_mb": 10, "root_gb": 1,
@@ -469,11 +462,10 @@ class ComputeTestCase(BaseTestCase):
         """Test passing of oversubscribed disk policy from the scheduler."""
 
         self.flags(reserved_host_disk_mb=0, reserved_host_memory_mb=0)
-        self.rt.update_available_resource(
-                self.context.elevated())
+        self.rt.update_available_resource(self.context.elevated())
 
         # get total memory as reported by virt driver:
-        resources = self.compute.driver.get_available_resource()
+        resources = self.compute.driver.get_available_resource(NODENAME)
         total_disk_gb = resources['local_gb']
 
         oversub_limit_gb = total_disk_gb * 1.5
@@ -489,19 +481,17 @@ class ComputeTestCase(BaseTestCase):
         self.compute.run_instance(self.context, instance=instance,
                 filter_properties=filter_properties)
 
-        self.assertEqual(instance_gb,
-                self.rt.compute_node['local_gb_used'])
+        self.assertEqual(instance_gb, self.rt.compute_node['local_gb_used'])
 
     def test_create_instance_with_oversubscribed_disk_fail(self):
         """Test passing of oversubscribed disk policy from the scheduler, but
         with insufficient disk.
         """
         self.flags(reserved_host_disk_mb=0, reserved_host_memory_mb=0)
-        self.rt.update_available_resource(
-                self.context.elevated())
+        self.rt.update_available_resource(self.context.elevated())
 
         # get total memory as reported by virt driver:
-        resources = self.compute.driver.get_available_resource()
+        resources = self.compute.driver.get_available_resource(NODENAME)
         total_disk_gb = resources['local_gb']
 
         oversub_limit_gb = total_disk_gb * 1.5
@@ -1783,7 +1773,7 @@ class ComputeTestCase(BaseTestCase):
         migration_ref = db.migration_get_by_instance_and_status(
                 self.context.elevated(), instance['uuid'], 'pre-migrating')
         self.compute.resize_instance(self.context, instance=instance,
-                migration=migration_ref, image={})
+                migration=migration_ref, image={}, instance_type=new_type)
         timeutils.set_time_override(cur_time)
         test_notifier.NOTIFICATIONS = []
 
@@ -1906,7 +1896,8 @@ class ComputeTestCase(BaseTestCase):
         self.assertRaises(test.TestingException, self.compute.resize_instance,
                           self.context, instance=instance,
                           migration=migration_ref, image={},
-                          reservations=reservations)
+                          reservations=reservations,
+                          instance_type=jsonutils.to_primitive(instance_type))
         instance = db.instance_get_by_uuid(self.context, instance['uuid'])
         self.assertEqual(instance['vm_state'], vm_states.ERROR)
 
@@ -1928,8 +1919,8 @@ class ComputeTestCase(BaseTestCase):
         db.instance_update(self.context, instance['uuid'],
                            {"task_state": task_states.RESIZE_PREP})
         self.compute.resize_instance(self.context, instance=instance,
-                                     migration=migration_ref,
-                                     image={})
+                migration=migration_ref, image={},
+                instance_type=jsonutils.to_primitive(instance_type))
         inst = db.instance_get_by_uuid(self.context, instance['uuid'])
         self.assertEqual(migration_ref['dest_compute'], inst['host'])
 
@@ -1962,9 +1953,10 @@ class ComputeTestCase(BaseTestCase):
 
         new_instance_type_ref = db.instance_type_get_by_flavor_id(
                 self.context, 3)
+        new_instance_type_p = jsonutils.to_primitive(new_instance_type_ref)
         self.compute.prep_resize(self.context,
                 instance=jsonutils.to_primitive(new_inst_ref),
-                instance_type=jsonutils.to_primitive(new_instance_type_ref),
+                instance_type=new_instance_type_p,
                 image={}, reservations=reservations)
 
         migration_ref = db.migration_get_by_instance_and_status(
@@ -1976,7 +1968,8 @@ class ComputeTestCase(BaseTestCase):
                            {"task_state": task_states.RESIZE_PREP})
         self.compute.resize_instance(self.context, instance=instance,
                                      migration=migration_ref,
-                                     image={})
+                                     image={},
+                                     instance_type=new_instance_type_p)
         self.compute.finish_resize(self.context,
                     migration=jsonutils.to_primitive(migration_ref),
                     disk_info={}, image={}, instance=instance)
@@ -2004,8 +1997,8 @@ class ComputeTestCase(BaseTestCase):
                        fake_setup_networks_on_host)
 
         self.compute.finish_revert_resize(self.context,
-                migration_id=migration_ref['id'], instance=rpcinst,
-                reservations=reservations)
+                migration=jsonutils.to_primitive(migration_ref),
+                instance=rpcinst, reservations=reservations)
 
         instance = db.instance_get_by_uuid(self.context, instance_uuid)
         self.assertEqual(instance['vm_state'], vm_states.ACTIVE)
@@ -2064,7 +2057,8 @@ class ComputeTestCase(BaseTestCase):
         self.assertRaises(test.TestingException, self.compute.resize_instance,
                           self.context, instance=inst_ref,
                           migration=migration_ref, image={},
-                          reservations=reservations)
+                          reservations=reservations,
+                          instance_type=jsonutils.to_primitive(instance_type))
         inst_ref = db.instance_get_by_uuid(self.context, inst_ref['uuid'])
         self.assertEqual(inst_ref['vm_state'], vm_states.ERROR)
         self.compute.terminate_instance(self.context,
@@ -2428,6 +2422,35 @@ class ComputeTestCase(BaseTestCase):
         compute_utils.add_instance_fault_from_exc(ctxt, instance_uuid,
                                                   NotImplementedError('test'),
                                                   exc_info)
+
+    def test_add_instance_fault_with_remote_error(self):
+        exc_info = None
+        instance_uuid = str(utils.gen_uuid())
+
+        def fake_db_fault_create(ctxt, values):
+            self.assertTrue(values['details'].startswith('Remote error'))
+            self.assertTrue('raise rpc_common.RemoteError'
+                in values['details'])
+            del values['details']
+
+            expected = {
+                'code': 500,
+                'instance_uuid': instance_uuid,
+                'message': 'My Test Message'
+            }
+            self.assertEquals(expected, values)
+
+        try:
+            raise rpc_common.RemoteError('test', 'My Test Message')
+        except rpc_common.RemoteError as exc:
+            exc_info = sys.exc_info()
+
+        self.stubs.Set(nova.db, 'instance_fault_create', fake_db_fault_create)
+
+        ctxt = context.get_admin_context()
+        compute_utils.add_instance_fault_from_exc(ctxt, instance_uuid,
+            exc,
+            exc_info)
 
     def test_add_instance_fault_user_error(self):
         exc_info = None
@@ -3168,7 +3191,7 @@ class ComputeAPITestCase(BaseTestCase):
 
         def dummy(*args, **kwargs):
             self.network_api_called = True
-            pass
+
         self.stubs.Set(self.compute_api.network_api, 'deallocate_for_instance',
                        dummy)
 
@@ -3184,10 +3207,13 @@ class ComputeAPITestCase(BaseTestCase):
         self.assertEqual(instance['task_state'], None)
         self.assertTrue(self.network_api_called)
 
-        #local delete, so db should be clean
-        self.assertRaises(exception.InstanceNotFound, db.instance_destroy,
-                self.context,
-                instance['uuid'])
+        # fetch the instance state from db and verify deletion.
+        deleted_context = context.RequestContext('fake', 'fake',
+                                                 read_deleted='yes')
+        instance = db.instance_get_by_uuid(deleted_context, instance_uuid)
+        self.assertEqual(instance['vm_state'], vm_states.DELETED)
+        self.assertEqual(instance['task_state'], None)
+        self.assertTrue(instance['deleted'])
 
     def test_repeated_delete_quota(self):
         in_use = {'instances': 1}
@@ -3247,7 +3273,12 @@ class ComputeAPITestCase(BaseTestCase):
         db.instance_destroy(self.context, instance['uuid'])
 
     def test_delete_soft(self):
-        instance, instance_uuid = self._run_instance()
+        instance, instance_uuid = self._run_instance(params={
+                'host': FLAGS.host})
+
+        self.mox.StubOutWithMock(nova.quota.QUOTAS, 'commit')
+        nova.quota.QUOTAS.commit(mox.IgnoreArg(), mox.IgnoreArg())
+        self.mox.ReplayAll()
 
         self.compute_api.soft_delete(self.context, instance)
 
@@ -3257,14 +3288,36 @@ class ComputeAPITestCase(BaseTestCase):
         db.instance_destroy(self.context, instance['uuid'])
 
     def test_delete_soft_fail(self):
-        instance, instance_uuid = self._run_instance()
-
+        instance, instance_uuid = self._run_instance(params={
+                'host': FLAGS.host})
         instance = db.instance_update(self.context, instance_uuid,
                                       {'disable_terminate': True})
+
         self.compute_api.soft_delete(self.context, instance)
 
         instance = db.instance_get_by_uuid(self.context, instance_uuid)
         self.assertEqual(instance['task_state'], None)
+
+        db.instance_destroy(self.context, instance['uuid'])
+
+    def test_delete_soft_rollback(self):
+        instance, instance_uuid = self._run_instance(params={
+                'host': FLAGS.host})
+
+        self.mox.StubOutWithMock(nova.quota.QUOTAS, 'rollback')
+        nova.quota.QUOTAS.rollback(mox.IgnoreArg(), mox.IgnoreArg())
+        self.mox.ReplayAll()
+
+        def fail(*args, **kwargs):
+            raise test.TestingException()
+        self.stubs.Set(self.compute_api.compute_rpcapi, 'soft_delete_instance',
+                       fail)
+
+        self.assertRaises(test.TestingException, self.compute_api.soft_delete,
+                          self.context, instance)
+
+        instance = db.instance_get_by_uuid(self.context, instance_uuid)
+        self.assertEqual(instance['task_state'], task_states.SOFT_DELETING)
 
         db.instance_destroy(self.context, instance['uuid'])
 
@@ -3362,9 +3415,8 @@ class ComputeAPITestCase(BaseTestCase):
 
     def test_restore(self):
         """Ensure instance can be restored from a soft delete"""
-        instance = jsonutils.to_primitive(self._create_fake_instance())
-        instance_uuid = instance['uuid']
-        self.compute.run_instance(self.context, instance=instance)
+        instance, instance_uuid = self._run_instance(params={
+                'host': FLAGS.host})
 
         instance = db.instance_get_by_uuid(self.context, instance_uuid)
         self.compute_api.soft_delete(self.context, instance)
@@ -3376,6 +3428,10 @@ class ComputeAPITestCase(BaseTestCase):
         instance = db.instance_update(self.context, instance['uuid'],
                                       {'vm_state': vm_states.SOFT_DELETED,
                                        'task_state': None})
+
+        self.mox.StubOutWithMock(nova.quota.QUOTAS, 'commit')
+        nova.quota.QUOTAS.commit(mox.IgnoreArg(), mox.IgnoreArg())
+        self.mox.ReplayAll()
 
         self.compute_api.restore(self.context, instance)
 
@@ -3854,6 +3910,25 @@ class ComputeAPITestCase(BaseTestCase):
         self.compute.run_instance(self.context, instance=instance)
 
         self.assertRaises(exception.NotFound, self.compute_api.resize,
+                self.context, instance, 200)
+
+        self.compute.terminate_instance(self.context, instance=instance)
+
+    def test_resize_deleted_flavor_fails(self):
+        instance = self._create_fake_instance()
+        instance = db.instance_get_by_uuid(self.context, instance['uuid'])
+        instance = jsonutils.to_primitive(instance)
+        self.compute.run_instance(self.context, instance=instance)
+
+        name = 'test_resize_new_flavor'
+        flavorid = 11
+        memory_mb = 128
+        root_gb = 0
+        vcpus = 1
+        instance_types.create(name, memory_mb, vcpus, root_gb, 0,
+                              flavorid, 0, 1.0, True)
+        instance_types.destroy(name)
+        self.assertRaises(exception.FlavorNotFound, self.compute_api.resize,
                 self.context, instance, 200)
 
         self.compute.terminate_instance(self.context, instance=instance)
@@ -5087,7 +5162,8 @@ class ComputeAggrTestCase(BaseTestCase):
         self.stubs.Set(self.compute.driver, "add_to_aggregate",
                        fake_driver_add_to_aggregate)
 
-        self.compute.add_aggregate_host(self.context, self.aggr.id, "host")
+        self.compute.add_aggregate_host(self.context, "host",
+                aggregate=jsonutils.to_primitive(self.aggr))
         self.assertTrue(fake_driver_add_to_aggregate.called)
 
     def test_remove_aggregate_host(self):
@@ -5099,26 +5175,28 @@ class ComputeAggrTestCase(BaseTestCase):
         self.stubs.Set(self.compute.driver, "remove_from_aggregate",
                        fake_driver_remove_from_aggregate)
 
-        self.compute.remove_aggregate_host(self.context, self.aggr.id, "host")
+        self.compute.remove_aggregate_host(self.context,
+                aggregate=jsonutils.to_primitive(self.aggr), host="host")
         self.assertTrue(fake_driver_remove_from_aggregate.called)
 
     def test_add_aggregate_host_passes_slave_info_to_driver(self):
         def driver_add_to_aggregate(context, aggregate, host, **kwargs):
             self.assertEquals(self.context, context)
-            self.assertEquals(aggregate.id, self.aggr.id)
+            self.assertEquals(aggregate['id'], self.aggr.id)
             self.assertEquals(host, "the_host")
             self.assertEquals("SLAVE_INFO", kwargs.get("slave_info"))
 
         self.stubs.Set(self.compute.driver, "add_to_aggregate",
                        driver_add_to_aggregate)
 
-        self.compute.add_aggregate_host(self.context, self.aggr.id,
-            "the_host", slave_info="SLAVE_INFO")
+        self.compute.add_aggregate_host(self.context, "the_host",
+                slave_info="SLAVE_INFO",
+                aggregate=jsonutils.to_primitive(self.aggr))
 
     def test_remove_from_aggregate_passes_slave_info_to_driver(self):
         def driver_remove_from_aggregate(context, aggregate, host, **kwargs):
             self.assertEquals(self.context, context)
-            self.assertEquals(aggregate.id, self.aggr.id)
+            self.assertEquals(aggregate['id'], self.aggr.id)
             self.assertEquals(host, "the_host")
             self.assertEquals("SLAVE_INFO", kwargs.get("slave_info"))
 
@@ -5126,7 +5204,8 @@ class ComputeAggrTestCase(BaseTestCase):
                        driver_remove_from_aggregate)
 
         self.compute.remove_aggregate_host(self.context,
-            self.aggr.id, "the_host", slave_info="SLAVE_INFO")
+                aggregate=jsonutils.to_primitive(self.aggr), host="the_host",
+                slave_info="SLAVE_INFO")
 
 
 class ComputePolicyTestCase(BaseTestCase):
@@ -5235,6 +5314,23 @@ class ComputePolicyTestCase(BaseTestCase):
         self.assertRaises(exception.PolicyNotAuthorized,
                           self.compute_api.get_instance_faults,
                           self.context, instances)
+
+    def test_force_host_fail(self):
+        rules = {"compute:create": [],
+                 "compute:create:forced_host": [["role:fake"]]}
+        self._set_rules(rules)
+
+        self.assertRaises(exception.PolicyNotAuthorized,
+                          self.compute_api.create, self.context, None, '1',
+                          availability_zone='1:1')
+
+    def test_force_host_pass(self):
+        rules = {"compute:create": [],
+                 "compute:create:forced_host": []}
+        self._set_rules(rules)
+
+        self.compute_api.create(self.context, None, '1',
+                                availability_zone='1:1')
 
 
 class ComputeHostAPITestCase(BaseTestCase):
@@ -5476,8 +5572,11 @@ class DisabledInstanceTypesTestCase(BaseTestCase):
         orig_get_instance_type_by_flavor_id =\
                 instance_types.get_instance_type_by_flavor_id
 
-        def fake_get_instance_type_by_flavor_id(flavor_id):
-            instance_type = orig_get_instance_type_by_flavor_id(flavor_id)
+        def fake_get_instance_type_by_flavor_id(flavor_id, ctxt=None,
+                                                read_deleted="yes"):
+            instance_type = orig_get_instance_type_by_flavor_id(flavor_id,
+                                                                ctxt,
+                                                                read_deleted)
             instance_type['disabled'] = False
             return instance_type
 
@@ -5494,8 +5593,11 @@ class DisabledInstanceTypesTestCase(BaseTestCase):
         orig_get_instance_type_by_flavor_id = \
                 instance_types.get_instance_type_by_flavor_id
 
-        def fake_get_instance_type_by_flavor_id(flavor_id):
-            instance_type = orig_get_instance_type_by_flavor_id(flavor_id)
+        def fake_get_instance_type_by_flavor_id(flavor_id, ctxt=None,
+                                                read_deleted="yes"):
+            instance_type = orig_get_instance_type_by_flavor_id(flavor_id,
+                                                                ctxt,
+                                                                read_deleted)
             instance_type['disabled'] = True
             return instance_type
 

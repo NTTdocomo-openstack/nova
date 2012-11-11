@@ -40,6 +40,7 @@ if os.path.exists(os.path.join(POSSIBLE_TOPDIR, 'nova', '__init__.py')):
 gettext.install('nova', unicode=1)
 
 
+from nova import config
 from nova import context
 from nova import exception
 from nova import flags
@@ -52,8 +53,8 @@ delete_exchange_opt = cfg.BoolOpt('delete_exchange',
                                   default=False,
                                   help='delete nova exchange too.')
 
-FLAGS = flags.FLAGS
-FLAGS.register_cli_opt(delete_exchange_opt)
+CONF = config.CONF
+CONF.register_cli_opt(delete_exchange_opt)
 
 
 def delete_exchange(exch):
@@ -69,8 +70,8 @@ def delete_queues(queues):
         x.queue_delete(q)
 
 if __name__ == '__main__':
-    args = flags.parse_args(sys.argv)
+    args = config.parse_args(sys.argv)
     logging.setup("nova")
     delete_queues(args[1:])
-    if FLAGS.delete_exchange:
-        delete_exchange(FLAGS.control_exchange)
+    if CONF.delete_exchange:
+        delete_exchange(CONF.control_exchange)

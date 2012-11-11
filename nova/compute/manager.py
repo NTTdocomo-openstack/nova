@@ -230,7 +230,7 @@ class ComputeVirtAPI(virtapi.VirtAPI):
 class ComputeManager(manager.SchedulerDependentManager):
     """Manages the running instances from creation to destruction."""
 
-    RPC_API_VERSION = '2.11'
+    RPC_API_VERSION = '2.16'
 
     def __init__(self, compute_driver=None, *args, **kwargs):
         """Load configuration options and connect to the hypervisor."""
@@ -271,7 +271,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         self._resource_tracker_dict = {}
 
-    def _get_resource_tracker(self, nodename=None):
+    def _get_resource_tracker(self, nodename):
         rt = self._resource_tracker_dict.get(nodename)
         if not rt:
             rtc = self.driver.get_resource_tracker_class()
@@ -530,12 +530,10 @@ class ComputeManager(manager.SchedulerDependentManager):
                     context, instance, "create.start",
                     extra_usage_info=extra_usage_info)
             network_info = None
-
             rt = self._get_resource_tracker(instance.get('node'))
-
             try:
                 limits = filter_properties.get('limits', {})
-                with rt.resource_claim(context, instance, limits):
+                with rt.instance_claim(context, instance, limits):
 
                     network_info = self._allocate_network(context, instance,
                             requested_networks)
@@ -1544,16 +1542,17 @@ class ComputeManager(manager.SchedulerDependentManager):
     @exception.wrap_exception(notifier=notifier, publisher_id=publisher_id())
     @reverts_task_state
     @wrap_instance_fault
-    def revert_resize(self, context, instance, migration_id,
-                      reservations=None):
+    def revert_resize(self, context, instance, migration=None,
+                      migration_id=None, reservations=None):
         """Destroys the new instance on the destination machine.
 
         Reverts the model changes, and powers on the old instance on the
         source machine.
 
         """
-        migration_ref = self.db.migration_get(context.elevated(),
-                migration_id)
+        if not migration:
+            migration = self.db.migration_get(context.elevated(),
+                                                  migration_id)
 
         # NOTE(comstud): A revert_resize is essentially a resize back to
         # the old size, so we need to send a usage event here.
@@ -1567,7 +1566,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                                                     teardown=True)
 
             self.network_api.migrate_instance_start(context, instance,
-                                                    migration_ref)
+                                                    migration)
 
             network_info = self._get_instance_nw_info(context, instance)
             block_device_info = self._get_instance_volume_block_device_info(
@@ -1579,14 +1578,14 @@ class ComputeManager(manager.SchedulerDependentManager):
             self._terminate_volume_connections(context, instance)
 
             self.compute_rpcapi.finish_revert_resize(context, instance,
-                    migration_ref['id'], migration_ref['source_compute'],
+                    migration, migration['source_compute'],
                     reservations)
 
     @exception.wrap_exception(notifier=notifier, publisher_id=publisher_id())
     @reverts_task_state
     @wrap_instance_fault
-    def finish_revert_resize(self, context, migration_id, instance,
-                             reservations=None):
+    def finish_revert_resize(self, context, instance, reservations=None,
+                             migration=None, migration_id=None):
         """Finishes the second half of reverting a resize.
 
         Power back on the source instance and revert the resized attributes
@@ -1594,7 +1593,9 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         """
         elevated = context.elevated()
-        migration_ref = self.db.migration_get(elevated, migration_id)
+
+        if not migration:
+            migration = self.db.migration_get(elevated, migration_id)
 
         with self._error_out_instance_on_exception(context, instance['uuid'],
                                                    reservations):
@@ -1605,11 +1606,11 @@ class ComputeManager(manager.SchedulerDependentManager):
 
             instance = self._instance_update(context,
                                         instance['uuid'],
-                                        host=migration_ref['source_compute'])
+                                        host=migration['source_compute'])
             self.network_api.setup_networks_on_host(context, instance,
-                                            migration_ref['source_compute'])
+                                            migration['source_compute'])
 
-            old_instance_type = migration_ref['old_instance_type_id']
+            old_instance_type = migration['old_instance_type_id']
             instance_type = instance_types.get_instance_type(old_instance_type)
 
             bdms = self._get_instance_volume_bdms(context, instance['uuid'])
@@ -1640,13 +1641,13 @@ class ComputeManager(manager.SchedulerDependentManager):
                                       RESIZE_REVERTING)
 
             self.network_api.migrate_instance_finish(context, instance,
-                                                     migration_ref)
+                                                     migration)
 
             self._instance_update(context, instance['uuid'],
                                   vm_state=vm_states.ACTIVE,
                                   task_state=None)
 
-            self.db.migration_update(elevated, migration_id,
+            self.db.migration_update(elevated, migration['id'],
                     {'status': 'reverted'})
 
             self._notify_about_instance_usage(
@@ -1689,12 +1690,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                     msg = _('destination same as source!')
                     raise exception.MigrationError(msg)
 
-                # TODO(russellb): no-db-compute: Send the old instance type
-                # info that is needed via rpc so db access isn't required
-                # here.
-                old_instance_type_id = instance['instance_type_id']
-                old_instance_type = instance_types.get_instance_type(
-                        old_instance_type_id)
+                old_instance_type = instance['instance_type']
 
                 migration_ref = self.db.migration_create(context.elevated(),
                         {'instance_uuid': instance['uuid'],
@@ -1708,7 +1704,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                 LOG.audit(_('Migrating'), context=context,
                         instance=instance)
                 self.compute_rpcapi.resize_instance(context, instance,
-                        migration_ref, image, reservations)
+                        migration_ref, image, instance_type, reservations)
 
             except Exception:
                 # try to re-schedule the resize elsewhere:
@@ -1763,15 +1759,17 @@ class ComputeManager(manager.SchedulerDependentManager):
     @reverts_task_state
     @wrap_instance_fault
     def resize_instance(self, context, instance, image,
-                        reservations=None, migration=None, migration_id=None):
+                        reservations=None, migration=None, migration_id=None,
+                        instance_type=None):
         """Starts the migration of a running instance to another host."""
         elevated = context.elevated()
         if not migration:
             migration = self.db.migration_get(elevated, migration_id)
         with self._error_out_instance_on_exception(context, instance['uuid'],
                                                    reservations):
-            instance_type_ref = self.db.instance_type_get(context,
-                    migration['new_instance_type_id'])
+            if not instance_type:
+                instance_type = self.db.instance_type_get(context,
+                        migration['new_instance_type_id'])
 
             network_info = self._get_instance_nw_info(context, instance)
 
@@ -1791,7 +1789,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
             disk_info = self.driver.migrate_disk_and_power_off(
                     context, instance, migration['dest_host'],
-                    instance_type_ref, self._legacy_nw_info(network_info),
+                    instance_type, self._legacy_nw_info(network_info),
                     block_device_info)
 
             self._terminate_volume_connections(context, instance)
@@ -2679,7 +2677,10 @@ class ComputeManager(manager.SchedulerDependentManager):
     @manager.periodic_task
     def _poll_rebooting_instances(self, context):
         if FLAGS.reboot_timeout > 0:
-            self.driver.poll_rebooting_instances(FLAGS.reboot_timeout)
+            instances = self.db.instance_get_all_hung_in_rebooting(
+                context, FLAGS.reboot_timeout)
+            self.driver.poll_rebooting_instances(FLAGS.reboot_timeout,
+                                                 instances)
 
     @manager.periodic_task
     def _poll_rescued_instances(self, context):
@@ -2827,8 +2828,9 @@ class ComputeManager(manager.SchedulerDependentManager):
                                              bw_ctr['uuid'],
                                              prev_time,
                                              bw_ctr['mac_address'])
-                    last_ctr_in = usage['last_ctr_in']
-                    last_ctr_out = usage['last_ctr_out']
+                    if usage:
+                        last_ctr_in = usage['last_ctr_in']
+                        last_ctr_out = usage['last_ctr_out']
 
                 if last_ctr_in is not None:
                     if bw_ctr['bw_in'] < last_ctr_in:
@@ -2863,9 +2865,8 @@ class ComputeManager(manager.SchedulerDependentManager):
             # This will grab info about the host and queue it
             # to be sent to the Schedulers.
             capabilities = self.driver.get_host_stats(refresh=True)
-            if not isinstance(capabilities, list):
-                capabilities = [capabilities]
-            for capability in capabilities:
+            for capability in (capabilities if isinstance(capabilities, list)
+                               else [capabilities]):
                 capability['host_ip'] = FLAGS.my_ip
             self.update_service_capabilities(capabilities)
 
@@ -3035,18 +3036,13 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         :param context: security context
         """
+        new_resource_tracker_dict = {}
         nodenames = self.driver.get_available_nodes()
-        if nodenames is None:
-            rt = self._get_resource_tracker(None)
+        for nodename in nodenames:
+            rt = self._get_resource_tracker(nodename)
             rt.update_available_resource(context)
-        else:
-            nodenames_to_remove = set(self._resource_tracker_dict.keys())
-            for nodename in nodenames:
-                rt = self._get_resource_tracker(nodename)
-                rt.update_available_resource(context)
-                nodenames_to_remove.discard(nodename)
-            for nodename in nodenames_to_remove:
-                self._resource_tracker_dict.pop(nodename, None)
+            new_resource_tracker_dict[nodename] = rt
+        self._resource_tracker_dict = new_resource_tracker_dict
 
     @manager.periodic_task(
         ticks_between_runs=FLAGS.running_deleted_instance_poll_interval)
@@ -3134,9 +3130,12 @@ class ComputeManager(manager.SchedulerDependentManager):
                 self._set_instance_error_state(context, instance_uuid)
 
     @exception.wrap_exception(notifier=notifier, publisher_id=publisher_id())
-    def add_aggregate_host(self, context, aggregate_id, host, slave_info=None):
+    def add_aggregate_host(self, context, host, slave_info=None,
+                           aggregate=None, aggregate_id=None):
         """Notify hypervisor of change (for hypervisor pools)."""
-        aggregate = self.db.aggregate_get(context, aggregate_id)
+        if not aggregate:
+            aggregate = self.db.aggregate_get(context, aggregate_id)
+
         try:
             self.driver.add_to_aggregate(context, aggregate, host,
                                          slave_info=slave_info)
@@ -3144,13 +3143,15 @@ class ComputeManager(manager.SchedulerDependentManager):
             with excutils.save_and_reraise_exception():
                 self.driver.undo_aggregate_operation(context,
                                                self.db.aggregate_host_delete,
-                                               aggregate.id, host)
+                                               aggregate['id'], host)
 
     @exception.wrap_exception(notifier=notifier, publisher_id=publisher_id())
-    def remove_aggregate_host(self, context, aggregate_id,
-                              host, slave_info=None):
+    def remove_aggregate_host(self, context, host, slave_info=None,
+                              aggregate=None, aggregate_id=None):
         """Removes a host from a physical hypervisor pool."""
-        aggregate = self.db.aggregate_get(context, aggregate_id)
+        if not aggregate:
+            aggregate = self.db.aggregate_get(context, aggregate_id)
+
         try:
             self.driver.remove_from_aggregate(context, aggregate, host,
                                               slave_info=slave_info)
@@ -3159,7 +3160,7 @@ class ComputeManager(manager.SchedulerDependentManager):
             with excutils.save_and_reraise_exception():
                 self.driver.undo_aggregate_operation(
                                     context, self.db.aggregate_host_add,
-                                    aggregate.id, host,
+                                    aggregate['id'], host,
                                     isinstance(e, exception.AggregateError))
 
     @manager.periodic_task(

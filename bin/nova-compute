@@ -20,7 +20,14 @@
 """Starter script for Nova Compute."""
 
 import eventlet
-eventlet.monkey_patch()
+import os
+
+if os.name == 'nt':
+    # eventlet monkey patching causes subprocess.Popen to fail on Windows
+    # when using pipes due to missing non blocking I/O support
+    eventlet.monkey_patch(os=False)
+else:
+    eventlet.monkey_patch()
 
 import os
 import sys
@@ -34,17 +41,19 @@ if os.path.exists(os.path.join(POSSIBLE_TOPDIR, 'nova', '__init__.py')):
     sys.path.insert(0, POSSIBLE_TOPDIR)
 
 
+from nova import config
 from nova import flags
 from nova.openstack.common import log as logging
 from nova import service
 from nova import utils
 
+CONF = config.CONF
+
 if __name__ == '__main__':
-    flags.parse_args(sys.argv)
-    FLAGS = flags.FLAGS
+    config.parse_args(sys.argv)
     logging.setup('nova')
     utils.monkey_patch()
     server = service.Service.create(binary='nova-compute',
-                                    topic=FLAGS.compute_topic)
+                                    topic=CONF.compute_topic)
     service.serve(server)
     service.wait()

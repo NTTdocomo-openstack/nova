@@ -372,12 +372,7 @@ class BareMetalDriver(driver.ComputeDriver):
     def refresh_instance_security_rules(self, instance):
         self._firewall_driver.refresh_instance_security_rules(instance)
 
-    def get_available_resource(self):
-        raise exception.NovaException('method should never be called')
-
-    # Should we add 'nodename' parameter to get_available_resource() instead
-    # of add this new method?
-    def get_available_node_resource(self, nodename):
+    def get_available_resource(self, nodename):
         context = nova_context.get_admin_context()
         node_id = int(nodename)
         node = bmdb.bm_node_get(context, node_id)

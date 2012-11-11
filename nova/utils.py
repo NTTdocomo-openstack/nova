@@ -47,6 +47,7 @@ from eventlet import greenthread
 from eventlet import semaphore
 import netaddr
 
+from nova import config
 from nova import exception
 from nova import flags
 from nova.openstack.common import cfg
@@ -57,9 +58,8 @@ from nova.openstack.common import timeutils
 
 
 LOG = logging.getLogger(__name__)
-FLAGS = flags.FLAGS
-
-FLAGS.register_opt(
+CONF = config.CONF
+CONF.register_opt(
     cfg.BoolOpt('disable_process_locking', default=False,
                 help='Whether to disable inter-process locks'))
 
@@ -171,7 +171,7 @@ def execute(*cmd, **kwargs):
                                         'to utils.execute: %r') % kwargs)
 
     if run_as_root and os.geteuid() != 0:
-        cmd = ['sudo', 'nova-rootwrap', FLAGS.rootwrap_config] + list(cmd)
+        cmd = ['sudo', 'nova-rootwrap', CONF.rootwrap_config] + list(cmd)
 
     cmd = map(str, cmd)
 
@@ -180,12 +180,20 @@ def execute(*cmd, **kwargs):
         try:
             LOG.debug(_('Running cmd (subprocess): %s'), ' '.join(cmd))
             _PIPE = subprocess.PIPE  # pylint: disable=E1101
+
+            if os.name == 'nt':
+                preexec_fn = None
+                close_fds = False
+            else:
+                preexec_fn = _subprocess_setup
+                close_fds = True
+
             obj = subprocess.Popen(cmd,
                                    stdin=_PIPE,
                                    stdout=_PIPE,
                                    stderr=_PIPE,
-                                   close_fds=True,
-                                   preexec_fn=_subprocess_setup,
+                                   close_fds=close_fds,
+                                   preexec_fn=preexec_fn,
                                    shell=shell)
             result = None
             if process_input is not None:
@@ -330,7 +338,7 @@ def last_completed_audit_period(unit=None, before=None):
               The begin timestamp of this audit period is the same as the
               end of the previous."""
     if not unit:
-        unit = FLAGS.instance_usage_audit_period
+        unit = CONF.instance_usage_audit_period
 
     offset = 0
     if '@' in unit:
@@ -483,7 +491,7 @@ class LazyPluggable(object):
 
     def __get_backend(self):
         if not self.__backend:
-            backend_name = FLAGS[self.__pivot]
+            backend_name = CONF[self.__pivot]
             if backend_name not in self.__backends:
                 msg = _('Invalid backend: %s') % backend_name
                 raise exception.NovaException(msg)
@@ -772,18 +780,6 @@ def gen_uuid():
     return uuid.uuid4()
 
 
-def is_uuid_like(val):
-    """For our purposes, a UUID is a string in canonical form:
-
-        aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
-    """
-    try:
-        uuid.UUID(val)
-        return True
-    except (TypeError, ValueError, AttributeError):
-        return False
-
-
 def bool_from_str(val):
     """Convert a string representation of a bool into a bool value"""
 
@@ -851,7 +847,7 @@ def monkey_patch():
     this function patches a decorator
     for all functions in specified modules.
     You can set decorators for each modules
-    using FLAGS.monkey_patch_modules.
+    using CONF.monkey_patch_modules.
     The format is "Module path:Decorator function".
     Example: 'nova.api.ec2.cloud:nova.notifier.api.notify_decorator'
 
@@ -861,11 +857,11 @@ def monkey_patch():
     name - name of the function
     function - object of the function
     """
-    # If FLAGS.monkey_patch is not True, this function do nothing.
-    if not FLAGS.monkey_patch:
+    # If CONF.monkey_patch is not True, this function do nothing.
+    if not CONF.monkey_patch:
         return
     # Get list of modules and decorators
-    for module_and_decorator in FLAGS.monkey_patch_modules:
+    for module_and_decorator in CONF.monkey_patch_modules:
         module, decorator_name = module_and_decorator.split(':')
         # import decorator function
         decorator = importutils.import_class(decorator_name)
@@ -913,7 +909,7 @@ def generate_glance_url():
     """Generate the URL to glance."""
     # TODO(jk0): This will eventually need to take SSL into consideration
     # when supported in glance.
-    return "http://%s:%d" % (FLAGS.glance_host, FLAGS.glance_port)
+    return "http://%s:%d" % (CONF.glance_host, CONF.glance_port)
 
 
 def generate_image_url(image_ref):
@@ -1044,7 +1040,7 @@ def service_is_up(service):
     last_heartbeat = service['updated_at'] or service['created_at']
     # Timestamps in DB are UTC.
     elapsed = total_seconds(timeutils.utcnow() - last_heartbeat)
-    return abs(elapsed) <= FLAGS.service_down_time
+    return abs(elapsed) <= CONF.service_down_time
 
 
 def generate_mac_address():
@@ -1056,7 +1052,7 @@ def generate_mac_address():
     #             properly: 0xfa.
     #             Discussion: https://bugs.launchpad.net/nova/+bug/921838
     mac = [0xfa, 0x16, 0x3e,
-           random.randint(0x00, 0x7f),
+           random.randint(0x00, 0xff),
            random.randint(0x00, 0xff),
            random.randint(0x00, 0xff)]
     return ':'.join(map(lambda x: "%02x" % x, mac))
@@ -1172,13 +1168,17 @@ def mkfs(fs, path, label=None):
     :param label: Volume label to use
     """
     if fs == 'swap':
-        execute('mkswap', path)
+        args = ['mkswap']
     else:
         args = ['mkfs', '-t', fs]
-        #add -F to force no interactive excute on non-block device.
-        if fs in ['ext3', 'ext4']:
-            args.extend(['-F'])
-        if label:
-            args.extend(['-n', label])
-        args.append(path)
-        execute(*args)
+    #add -F to force no interactive execute on non-block device.
+    if fs in ('ext3', 'ext4'):
+        args.extend(['-F'])
+    if label:
+        if fs in ('msdos', 'vfat'):
+            label_opt = '-n'
+        else:
+            label_opt = '-L'
+        args.extend([label_opt, label])
+    args.append(path)
+    execute(*args)

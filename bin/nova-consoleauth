@@ -31,17 +31,18 @@ if os.path.exists(os.path.join(possible_topdir, 'nova', '__init__.py')):
     sys.path.insert(0, possible_topdir)
 
 
+from nova import config
 from nova.consoleauth import manager
 from nova import flags
 from nova.openstack.common import log as logging
 from nova import service
 
+CONF = config.CONF
 
 if __name__ == "__main__":
-    flags.parse_args(sys.argv)
-    FLAGS = flags.FLAGS
+    config.parse_args(sys.argv)
     logging.setup("nova")
     server = service.Service.create(binary='nova-consoleauth',
-                                    topic=FLAGS.consoleauth_topic)
+                                    topic=CONF.consoleauth_topic)
     service.serve(server)
     service.wait()

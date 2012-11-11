@@ -30,6 +30,7 @@ import nova
 from nova import exception
 from nova import flags
 from nova.openstack.common import timeutils
+from nova.openstack.common import uuidutils
 from nova import test
 from nova import utils
 
@@ -510,7 +511,7 @@ class GenericUtilsTestCase(test.TestCase):
 
 class IsUUIDLikeTestCase(test.TestCase):
     def assertUUIDLike(self, val, expected):
-        result = utils.is_uuid_like(val)
+        result = uuidutils.is_uuid_like(val)
         self.assertEqual(result, expected)
 
     def test_good_uuid(self):
@@ -779,8 +780,23 @@ class MkfsTestCase(test.TestCase):
     def test_mkfs(self):
         self.mox.StubOutWithMock(utils, 'execute')
         utils.execute('mkfs', '-t', 'ext4', '-F', '/my/block/dev')
+        utils.execute('mkfs', '-t', 'msdos', '/my/msdos/block/dev')
         utils.execute('mkswap', '/my/swap/block/dev')
         self.mox.ReplayAll()
 
         utils.mkfs('ext4', '/my/block/dev')
+        utils.mkfs('msdos', '/my/msdos/block/dev')
         utils.mkfs('swap', '/my/swap/block/dev')
+
+    def test_mkfs_with_label(self):
+        self.mox.StubOutWithMock(utils, 'execute')
+        utils.execute('mkfs', '-t', 'ext4', '-F',
+                      '-L', 'ext4-vol', '/my/block/dev')
+        utils.execute('mkfs', '-t', 'msdos',
+                      '-n', 'msdos-vol', '/my/msdos/block/dev')
+        utils.execute('mkswap', '-L', 'swap-vol', '/my/swap/block/dev')
+        self.mox.ReplayAll()
+
+        utils.mkfs('ext4', '/my/block/dev', 'ext4-vol')
+        utils.mkfs('msdos', '/my/msdos/block/dev', 'msdos-vol')
+        utils.mkfs('swap', '/my/swap/block/dev', 'swap-vol')

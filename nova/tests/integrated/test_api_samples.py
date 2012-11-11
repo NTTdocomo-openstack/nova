@@ -178,6 +178,7 @@ class ApiSampleTestBase(integrated_helpers._IntegratedTestBase):
                 result = str(result)
                 expected = expected.replace('int:', '')
             expected = expected % subs
+            expected = '^%s$' % expected
             match = re.match(expected, result)
             if not match:
                 raise NoMatch(_('Values do not match:\n'
@@ -225,7 +226,7 @@ class ApiSampleTestBase(integrated_helpers._IntegratedTestBase):
                          '(Z|(\+|-)\d{2}:\d{2}|\.\d{6})',
             'password': '[0-9a-zA-Z]{1,12}',
             'ip': '[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}',
-            'ip6': '([0-9a-zA-Z]{1,4}:){1,7}:?[0-9a-zA-Z]',
+            'ip6': '([0-9a-zA-Z]{1,4}:){1,7}:?[0-9a-zA-Z]{1,4}',
             'id': '(?P<id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}'
                   '-[0-9a-f]{4}-[0-9a-f]{12})',
             'uuid': '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}'
@@ -303,6 +304,7 @@ class ServersSampleJsonTest(ServersSampleBase):
         subs = self._get_regexes()
         subs['hostid'] = '[a-f0-9]+'
         subs['id'] = uuid
+        subs['hypervisor_hostname'] = r'[\w\.\-]+'
         return self._verify_response('server-get-resp', subs, response)
 
     def test_servers_list(self):
@@ -320,6 +322,7 @@ class ServersSampleJsonTest(ServersSampleBase):
         subs = self._get_regexes()
         subs['hostid'] = '[a-f0-9]+'
         subs['id'] = uuid
+        subs['hypervisor_hostname'] = r'[\w\.\-]+'
         return self._verify_response('servers-details-resp', subs, response)
 
 
@@ -804,6 +807,7 @@ class ExtendedServerAttributesJsonTest(ServersSampleBase):
         subs['hostid'] = '[a-f0-9]+'
         subs['id'] = uuid
         subs['instance_name'] = 'instance-\d{8}'
+        subs['hypervisor_hostname'] = r'[\w\.\-]+'
         return self._verify_response('extended-server-attrs-get',
                                      subs, response)
 
@@ -815,6 +819,7 @@ class ExtendedServerAttributesJsonTest(ServersSampleBase):
         subs['hostid'] = '[a-f0-9]+'
         subs['id'] = uuid
         subs['instance_name'] = 'instance-\d{8}'
+        subs['hypervisor_hostname'] = r'[\w\.\-]+'
         return self._verify_response('extended-server-attrs-list',
                                      subs, response)
 

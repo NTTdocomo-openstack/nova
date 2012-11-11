@@ -21,6 +21,7 @@ import os
 import time
 import uuid
 
+from nova import config
 from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import jsonutils
@@ -49,10 +50,15 @@ xenapi_agent_opts = [
                     'configuration is not injected into the image. '
                     'Used if compute_driver=xenapi.XenAPIDriver and '
                     ' flat_injected=True'),
+    cfg.StrOpt('xenapi_disable_agent',
+               default=False,
+               help='Disable XenAPI agent. Reduces the amount of time '
+                    'it takes nova to detect that a VM has started, when '
+                    'that VM does not have the agent installed'),
 ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(xenapi_agent_opts)
+CONF = config.CONF
+CONF.register_opts(xenapi_agent_opts)
 
 
 def _call_agent(session, instance, vm_ref, method, addl_args=None,
@@ -61,7 +67,7 @@ def _call_agent(session, instance, vm_ref, method, addl_args=None,
     if addl_args is None:
         addl_args = {}
     if timeout is None:
-        timeout = FLAGS.agent_timeout
+        timeout = CONF.agent_timeout
 
     vm_rec = session.call_xenapi("VM.get_record", vm_ref)
 
@@ -132,7 +138,7 @@ class XenAPIBasedAgent(object):
         # also take a while to boot. So we need to be more patient than
         # normal as well as watch for domid changes
 
-        expiration = time.time() + FLAGS.agent_version_timeout
+        expiration = time.time() + CONF.agent_version_timeout
         while time.time() < expiration:
             ret = _get_agent_version(self.session, self.instance, self.vm_ref)
             if ret:
@@ -230,7 +236,7 @@ class XenAPIBasedAgent(object):
 
         resp = _call_agent(
             self.session, self.instance, self.vm_ref, 'resetnetwork',
-            timeout=FLAGS.agent_resetnetwork_timeout)
+            timeout=CONF.agent_resetnetwork_timeout)
         if resp['returncode'] != '0':
             LOG.error(_('Failed to reset network: %(resp)r'), locals(),
                       instance=self.instance)
@@ -244,7 +250,10 @@ def find_guest_agent(base_dir):
     tries to locate a guest agent at the path
     specificed by agent_rel_path
     """
-    agent_rel_path = FLAGS.xenapi_agent_path
+    if CONF.xenapi_disable_agent:
+        return False
+
+    agent_rel_path = CONF.xenapi_agent_path
     agent_path = os.path.join(base_dir, agent_rel_path)
     if os.path.isfile(agent_path):
         # The presence of the guest agent

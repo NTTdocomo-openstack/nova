@@ -46,6 +46,7 @@ import xmlrpclib
 from eventlet import queue
 from eventlet import timeout
 
+from nova import config
 from nova import context
 from nova import db
 from nova import exception
@@ -118,8 +119,8 @@ xenapi_opts = [
                help='Timeout in seconds for XenAPI login.'),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(xenapi_opts)
+CONF = config.CONF
+CONF.register_opts(xenapi_opts)
 
 
 class XenAPIDriver(driver.ComputeDriver):
@@ -128,9 +129,9 @@ class XenAPIDriver(driver.ComputeDriver):
     def __init__(self, virtapi, read_only=False):
         super(XenAPIDriver, self).__init__(virtapi)
 
-        url = FLAGS.xenapi_connection_url
-        username = FLAGS.xenapi_connection_username
-        password = FLAGS.xenapi_connection_password
+        url = CONF.xenapi_connection_url
+        username = CONF.xenapi_connection_username
+        password = CONF.xenapi_connection_password
         if not url or password is None:
             raise Exception(_('Must specify xenapi_connection_url, '
                               'xenapi_connection_username (optionally), and '
@@ -153,7 +154,7 @@ class XenAPIDriver(driver.ComputeDriver):
         return self._host_state
 
     def init_host(self, host):
-        if FLAGS.xenapi_check_host:
+        if CONF.xenapi_check_host:
             vm_utils.ensure_correct_host(self._session)
 
         try:
@@ -181,13 +182,7 @@ class XenAPIDriver(driver.ComputeDriver):
         """Finish reverting a resize, powering back on the instance"""
         # NOTE(vish): Xen currently does not use network info.
         self._vmops.finish_revert_migration(instance)
-        block_device_mapping = driver.block_device_info_get_mapping(
-                block_device_info)
-        for vol in block_device_mapping:
-            connection_info = vol['connection_info']
-            mount_device = vol['mount_device'].rpartition("/")[2]
-            self.attach_volume(connection_info,
-                    instance['name'], mount_device)
+        self._attach_mapped_block_devices(instance, block_device_info)
 
     def finish_migration(self, context, migration, instance, disk_info,
                          network_info, image_meta, resize_instance=False,
@@ -195,6 +190,9 @@ class XenAPIDriver(driver.ComputeDriver):
         """Completes a resize, turning on the migrated instance"""
         self._vmops.finish_migration(context, migration, instance, disk_info,
                                      network_info, image_meta, resize_instance)
+        self._attach_mapped_block_devices(instance, block_device_info)
+
+    def _attach_mapped_block_devices(self, instance, block_device_info):
         block_device_mapping = driver.block_device_info_get_mapping(
                 block_device_info)
         for vol in block_device_mapping:
@@ -290,9 +288,9 @@ class XenAPIDriver(driver.ComputeDriver):
         """Restore the specified instance"""
         self._vmops.restore(instance)
 
-    def poll_rebooting_instances(self, timeout):
+    def poll_rebooting_instances(self, timeout, instances):
         """Poll for rebooting instances"""
-        self._vmops.poll_rebooting_instances(timeout)
+        self._vmops.poll_rebooting_instances(timeout, instances)
 
     def poll_rescued_instances(self, timeout):
         """Poll for rescued instances"""
@@ -371,7 +369,7 @@ class XenAPIDriver(driver.ComputeDriver):
 
     @staticmethod
     def get_host_ip_addr():
-        xs_url = urlparse.urlparse(FLAGS.xenapi_connection_url)
+        xs_url = urlparse.urlparse(CONF.xenapi_connection_url)
         return xs_url.netloc
 
     def attach_volume(self, connection_info, instance_name, mountpoint):
@@ -387,17 +385,18 @@ class XenAPIDriver(driver.ComputeDriver):
                                              mountpoint)
 
     def get_console_pool_info(self, console_type):
-        xs_url = urlparse.urlparse(FLAGS.xenapi_connection_url)
+        xs_url = urlparse.urlparse(CONF.xenapi_connection_url)
         return {'address': xs_url.netloc,
-                'username': FLAGS.xenapi_connection_username,
-                'password': FLAGS.xenapi_connection_password}
+                'username': CONF.xenapi_connection_username,
+                'password': CONF.xenapi_connection_password}
 
-    def get_available_resource(self):
+    def get_available_resource(self, nodename):
         """Retrieve resource info.
 
         This method is called when nova-compute launches, and
         as part of a periodic task.
 
+        :param nodename: ignored in this driver
         :returns: dictionary describing resources
 
         """
@@ -634,7 +633,7 @@ class XenAPISession(object):
     def _create_first_session(self, url, user, pw, exception):
         try:
             session = self._create_session(url)
-            with timeout.Timeout(FLAGS.xenapi_login_timeout, exception):
+            with timeout.Timeout(CONF.xenapi_login_timeout, exception):
                 session.login_with_password(user, pw)
         except self.XenAPI.Failure, e:
             # if user and pw of the master are different, we're doomed!
@@ -650,21 +649,21 @@ class XenAPISession(object):
         return url
 
     def _populate_session_pool(self, url, user, pw, exception):
-        for i in xrange(FLAGS.xenapi_connection_concurrent - 1):
+        for i in xrange(CONF.xenapi_connection_concurrent - 1):
             session = self._create_session(url)
-            with timeout.Timeout(FLAGS.xenapi_login_timeout, exception):
+            with timeout.Timeout(CONF.xenapi_login_timeout, exception):
                 session.login_with_password(user, pw)
             self._sessions.put(session)
 
     def _get_host_uuid(self):
         if self.is_slave:
             aggr = db.aggregate_get_by_host(context.get_admin_context(),
-                    FLAGS.host, key=pool_states.POOL_FLAG)[0]
+                    CONF.host, key=pool_states.POOL_FLAG)[0]
             if not aggr:
                 LOG.error(_('Host is member of a pool, but DB '
                                 'says otherwise'))
                 raise exception.AggregateHostNotFound()
-            return aggr.metadetails[FLAGS.host]
+            return aggr.metadetails[CONF.host]
         else:
             with self._get_session() as session:
                 host_ref = session.xenapi.session.get_this_host(session.handle)

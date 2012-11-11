@@ -174,6 +174,7 @@ class HostState(object):
                 data["host_memory_free_computed"] = host_memory.get(
                                                     'free-computed', 0)
                 del data['host_memory']
+            data['hypervisor_hostname'] = data['host_hostname']
             self._stats = data
 
 
@@ -230,7 +231,7 @@ def _host_find(context, session, src, dst):
     :return: the compute host that manages dst
     """
     # NOTE: this would be a lot simpler if nova-compute stored
-    # FLAGS.host in the XenServer host's other-config map.
+    # CONF.host in the XenServer host's other-config map.
     # TODO(armando-migliaccio): improve according the note above
     aggregate = db.aggregate_get_by_host(context, src,
             key=pool_states.POOL_FLAG)[0]

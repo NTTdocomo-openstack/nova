@@ -21,6 +21,7 @@ Weighing Functions.
 
 import operator
 
+from nova import config
 from nova import exception
 from nova import flags
 from nova.openstack.common import importutils
@@ -30,8 +31,7 @@ from nova.scheduler import driver
 from nova.scheduler import least_cost
 from nova.scheduler import scheduler_options
 
-
-FLAGS = flags.FLAGS
+CONF = config.CONF
 LOG = logging.getLogger(__name__)
 
 
@@ -39,7 +39,7 @@ class FilterScheduler(driver.Scheduler):
     """Scheduler that can be used for filtering and weighing."""
     def __init__(self, *args, **kwargs):
         super(FilterScheduler, self).__init__(*args, **kwargs)
-        self.cost_function_cache = {}
+        self.cost_function_cache = None
         self.options = scheduler_options.SchedulerOptions()
 
     def schedule_run_instance(self, context, request_spec,
@@ -61,9 +61,8 @@ class FilterScheduler(driver.Scheduler):
         notifier.notify(context, notifier.publisher_id("scheduler"),
                         'scheduler.run_instance.start', notifier.INFO, payload)
 
-        weighted_hosts = self._schedule(context, FLAGS.compute_topic,
-                                        request_spec, filter_properties,
-                                        instance_uuids)
+        weighted_hosts = self._schedule(context, request_spec,
+                filter_properties, instance_uuids)
 
         # NOTE(comstud): Make sure we do not pass this through.  It
         # contains an instance of RpcContext that cannot be serialized.
@@ -108,8 +107,8 @@ class FilterScheduler(driver.Scheduler):
         the prep_resize operation to it.
         """
 
-        hosts = self._schedule(context, FLAGS.compute_topic, request_spec,
-                               filter_properties, [instance['uuid']])
+        hosts = self._schedule(context, request_spec, filter_properties,
+                [instance['uuid']])
         if not hosts:
             raise exception.NoValidHost(reason="")
         host = hosts.pop(0)
@@ -136,6 +135,7 @@ class FilterScheduler(driver.Scheduler):
                         'scheduler.run_instance.scheduled', notifier.INFO,
                         payload)
 
+        # TODO(NTTdocomo): Combine the next two updates into one
         driver.db_instance_node_set(context,
                 instance_uuid, weighted_host.host_state.nodename)
         updated_instance = driver.instance_update_db(context,
@@ -190,7 +190,7 @@ class FilterScheduler(driver.Scheduler):
         filter_properties['os_type'] = os_type
 
     def _max_attempts(self):
-        max_attempts = FLAGS.scheduler_max_attempts
+        max_attempts = CONF.scheduler_max_attempts
         if max_attempts < 1:
             raise exception.NovaException(_("Invalid value for "
                 "'scheduler_max_attempts', must be >= 1"))
@@ -223,16 +223,12 @@ class FilterScheduler(driver.Scheduler):
                     "instance %(instance_uuid)s") % locals()
             raise exception.NoValidHost(reason=msg)
 
-    def _schedule(self, context, topic, request_spec, filter_properties,
+    def _schedule(self, context, request_spec, filter_properties,
                   instance_uuids=None):
         """Returns a list of hosts that meet the required specs,
         ordered by their fitness.
         """
         elevated = context.elevated()
-        if topic != FLAGS.compute_topic:
-            msg = _("Scheduler only understands Compute nodes (for now)")
-            raise NotImplementedError(msg)
-
         instance_properties = request_spec['instance_properties']
         instance_type = request_spec.get("instance_type", None)
 
@@ -260,14 +256,10 @@ class FilterScheduler(driver.Scheduler):
         # host, we virtually consume resources on it so subsequent
         # selections can adjust accordingly.
 
-        # unfiltered_hosts_dict is {host : ZoneManager.HostInfo()}
-        unfiltered_hosts_dict = self.host_manager.get_all_host_states(
-                elevated, topic)
-
         # Note: remember, we are using an iterator here. So only
         # traverse this list once. This can bite you if the hosts
         # are being scanned in a filter or weighing function.
-        hosts = unfiltered_hosts_dict.itervalues()
+        hosts = self.host_manager.get_all_host_states(elevated)
 
         selected_hosts = []
         if instance_uuids:
@@ -303,25 +295,22 @@ class FilterScheduler(driver.Scheduler):
         selected_hosts.sort(key=operator.attrgetter('weight'))
         return selected_hosts
 
-    def get_cost_functions(self, topic=None):
+    def get_cost_functions(self):
         """Returns a list of tuples containing weights and cost functions to
         use for weighing hosts
         """
-        if topic is None:
-            # Schedulers only support compute right now.
-            topic = FLAGS.compute_topic
-        if topic in self.cost_function_cache:
-            return self.cost_function_cache[topic]
+        if self.cost_function_cache is not None:
+            return self.cost_function_cache
 
         cost_fns = []
-        for cost_fn_str in FLAGS.least_cost_functions:
+        for cost_fn_str in CONF.least_cost_functions:
             if '.' in cost_fn_str:
                 short_name = cost_fn_str.split('.')[-1]
             else:
                 short_name = cost_fn_str
                 cost_fn_str = "%s.%s.%s" % (
                         __name__, self.__class__.__name__, short_name)
-            if not (short_name.startswith('%s_' % topic) or
+            if not (short_name.startswith('compute_') or
                     short_name.startswith('noop')):
                 continue
 
@@ -336,11 +325,11 @@ class FilterScheduler(driver.Scheduler):
 
             try:
                 flag_name = "%s_weight" % cost_fn.__name__
-                weight = getattr(FLAGS, flag_name)
+                weight = getattr(CONF, flag_name)
             except AttributeError:
                 raise exception.SchedulerWeightFlagNotFound(
                         flag_name=flag_name)
             cost_fns.append((weight, cost_fn))
 
-        self.cost_function_cache[topic] = cost_fns
+        self.cost_function_cache = cost_fns
         return cost_fns

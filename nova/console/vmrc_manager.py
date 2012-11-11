@@ -18,6 +18,7 @@
 """VMRC Console Manager."""
 
 from nova.compute import rpcapi as compute_rpcapi
+from nova import config
 from nova import exception
 from nova import flags
 from nova import manager
@@ -29,24 +30,16 @@ from nova.virt.vmwareapi import driver as vmwareapi_conn
 
 LOG = logging.getLogger(__name__)
 
-vmrc_manager_opts = [
-    cfg.StrOpt('console_public_hostname',
-               default='',
-               help='Publicly visible name for this console host'),
-    cfg.StrOpt('console_driver',
-               default='nova.console.vmrc.VMRCConsole',
-               help='Driver to use for the console'),
-    ]
-
-FLAGS = flags.FLAGS
-FLAGS.register_opts(vmrc_manager_opts)
+CONF = config.CONF
+CONF.import_opt('console_driver', 'nova.console.manager')
+CONF.import_opt('console_public_hostname', 'nova.console.manager')
 
 
 class ConsoleVMRCManager(manager.Manager):
     """Manager to handle VMRC connections for accessing instance consoles."""
 
     def __init__(self, console_driver=None, *args, **kwargs):
-        self.driver = importutils.import_object(FLAGS.console_driver)
+        self.driver = importutils.import_object(CONF.console_driver)
         self.compute_rpcapi = compute_rpcapi.ComputeAPI()
         super(ConsoleVMRCManager, self).__init__(*args, **kwargs)
 
@@ -62,7 +55,7 @@ class ConsoleVMRCManager(manager.Manager):
                     pool['address'],
                     pool['username'],
                     pool['password'],
-                    FLAGS.console_vmrc_error_retries)
+                    CONF.console_vmrc_error_retries)
             self.sessions[pool['id']] = vim_session
         return self.sessions[pool['id']]
 
@@ -145,8 +138,8 @@ class ConsoleVMRCManager(manager.Manager):
             pool_info['host'] = self.host
             # ESX Address or Proxy Address
             public_host_name = pool_info['address']
-            if FLAGS.console_public_hostname:
-                public_host_name = FLAGS.console_public_hostname
+            if CONF.console_public_hostname:
+                public_host_name = CONF.console_public_hostname
             pool_info['public_hostname'] = public_host_name
             pool_info['console_type'] = console_type
             pool_info['compute_host'] = instance_host

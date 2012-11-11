@@ -28,6 +28,7 @@ from nova.compute import power_state
 from nova.compute import rpcapi as compute_rpcapi
 from nova.compute import utils as compute_utils
 from nova.compute import vm_states
+from nova import config
 from nova import db
 from nova import exception
 from nova import flags
@@ -52,11 +53,12 @@ scheduler_driver_opts = [
                help='Maximum number of attempts to schedule an instance'),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(scheduler_driver_opts)
+CONF = config.CONF
+CONF.register_opts(scheduler_driver_opts)
 
-flags.DECLARE('instances_path', 'nova.compute.manager')
-flags.DECLARE('libvirt_type', 'nova.virt.libvirt.driver')
+CONF = config.CONF
+CONF.import_opt('instances_path', 'nova.compute.manager')
+CONF.import_opt('libvirt_type', 'nova.virt.libvirt.driver')
 
 
 def handle_schedule_error(context, ex, instance_uuid, request_spec):
@@ -114,7 +116,7 @@ def cast_to_compute_host(context, host, method, **kwargs):
         instance_update_db(context, instance_uuid)
 
     rpc.cast(context,
-             rpc.queue_get_for(context, FLAGS.compute_topic, host),
+             rpc.queue_get_for(context, CONF.compute_topic, host),
              {"method": method, "args": kwargs})
     LOG.debug(_("Casted '%(method)s' to compute '%(host)s'") % locals())
 
@@ -122,7 +124,7 @@ def cast_to_compute_host(context, host, method, **kwargs):
 def cast_to_host(context, topic, host, method, **kwargs):
     """Generic cast to host"""
 
-    topic_mapping = {FLAGS.compute_topic: cast_to_compute_host}
+    topic_mapping = {CONF.compute_topic: cast_to_compute_host}
 
     func = topic_mapping.get(topic)
     if func:
@@ -158,7 +160,7 @@ class Scheduler(object):
 
     def __init__(self):
         self.host_manager = importutils.import_object(
-                FLAGS.scheduler_host_manager)
+                CONF.scheduler_host_manager)
         self.compute_api = compute_api.API()
         self.compute_rpcapi = compute_rpcapi.ComputeAPI()
 

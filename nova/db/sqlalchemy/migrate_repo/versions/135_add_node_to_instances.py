@@ -12,11 +12,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from sqlalchemy import String, Column, MetaData, Table
-
-from nova.openstack.common import log as logging
-
-LOG = logging.getLogger(__name__)
+from sqlalchemy import and_, String, Column, MetaData, select, Table
 
 
 def upgrade(migrate_engine):
@@ -28,12 +24,32 @@ def upgrade(migrate_engine):
 
     instances.create_column(node)
 
+    c_nodes = Table('compute_nodes', meta, autoload=True)
+    services = Table('services', meta, autoload=True)
+
+    # set instances.node = compute_nodes.hypervisore_hostname
+    q = select(
+            [instances.c.id, c_nodes.c.hypervisor_hostname],
+            whereclause=and_(
+                 instances.c.deleted != True,
+                 services.c.deleted != True,
+                 services.c.binary == 'nova-compute',
+                 c_nodes.c.deleted != True),
+            from_obj=instances.join(services,
+                                    instances.c.host == services.c.host)
+                              .join(c_nodes,
+                                    services.c.id == c_nodes.c.service_id))
+    for (instance_id, hypervisor_hostname) in q.execute():
+        instances.update().where(instances.c.id == instance_id).\
+                           values(node=hypervisor_hostname).\
+                           execute()
+
 
 def downgrade(migrate_engine):
     meta = MetaData()
     meta.bind = migrate_engine
 
-    instance_types = Table('instances', meta, autoload=True)
+    instances = Table('instances', meta, autoload=True)
     node = Column('node', String(length=255))
 
-    instance_types.drop_column(node)
+    instances.drop_column(node)

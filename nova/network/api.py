@@ -28,8 +28,6 @@ from nova.network import rpcapi as network_rpcapi
 from nova.openstack.common import log as logging
 from nova.openstack.common import rpc
 
-
-FLAGS = flags.FLAGS
 LOG = logging.getLogger(__name__)
 
 
@@ -331,7 +329,7 @@ class API(base.Base):
         except exception.FixedIpNotFoundForInstance:
             return False
         network = self.db.network_get(context, fixed_ips[0]['network_id'],
-                                      project_only=True)
+                                      project_only='allow_none')
         return network['multi_host']
 
     def _get_floating_ip_addresses(self, context, instance):
@@ -353,6 +351,7 @@ class API(base.Base):
         if self._is_multi_host(context, instance):
             args['floating_addresses'] = \
                 self._get_floating_ip_addresses(context, instance)
+            args['host'] = migration['dest_compute']
 
         self.network_rpcapi.migrate_instance_start(context, **args)
 
@@ -370,5 +369,6 @@ class API(base.Base):
         if self._is_multi_host(context, instance):
             args['floating_addresses'] = \
                 self._get_floating_ip_addresses(context, instance)
+            args['host'] = migration['dest_compute']
 
         self.network_rpcapi.migrate_instance_finish(context, **args)

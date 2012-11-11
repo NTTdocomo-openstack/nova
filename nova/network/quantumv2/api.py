@@ -17,6 +17,7 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 from nova.compute import api as compute_api
+from nova import config
 from nova.db import base
 from nova import exception
 from nova import flags
@@ -26,7 +27,7 @@ from nova.network import quantumv2
 from nova.openstack.common import cfg
 from nova.openstack.common import excutils
 from nova.openstack.common import log as logging
-from nova import utils
+from nova.openstack.common import uuidutils
 
 
 quantum_opts = [
@@ -51,10 +52,9 @@ quantum_opts = [
                     'quantum in admin context'),
     ]
 
-flags.DECLARE('default_floating_pool', 'nova.network.manager')
-
-FLAGS = flags.FLAGS
-FLAGS.register_opts(quantum_opts)
+CONF = config.CONF
+CONF.register_opts(quantum_opts)
+CONF.import_opt('default_floating_pool', 'nova.network.manager')
 LOG = logging.getLogger(__name__)
 
 NET_EXTERNAL = 'router:external'
@@ -90,6 +90,11 @@ class API(base.Base):
             search_opts['id'] = net_ids
         nets += quantum.list_networks(**search_opts).get('networks', [])
 
+        _ensure_requested_network_ordering(
+            lambda x: x['id'],
+            nets,
+            net_ids)
+
         return nets
 
     def allocate_for_instance(self, context, instance, **kwargs):
@@ -122,7 +127,7 @@ class API(base.Base):
         created_port_ids = []
         for network in nets:
             network_id = network['id']
-            zone = 'compute:%s' % FLAGS.node_availability_zone
+            zone = 'compute:%s' % CONF.node_availability_zone
             port_req_body = {'port': {'device_id': instance['uuid'],
                                       'device_owner': zone}}
             try:
@@ -282,7 +287,7 @@ class API(base.Base):
 
     def _get_port_id_by_fixed_address(self, client,
                                       instance, address):
-        zone = 'compute:%s' % FLAGS.node_availability_zone
+        zone = 'compute:%s' % CONF.node_availability_zone
         search_opts = {'device_id': instance['uuid'],
                        'device_owner': zone}
         data = client.list_ports(**search_opts)
@@ -437,7 +442,7 @@ class API(base.Base):
 
     def _get_floating_ip_pool_id_by_name_or_id(self, client, name_or_id):
         search_opts = {NET_EXTERNAL: True, 'fields': 'id'}
-        if utils.is_uuid_like(name_or_id):
+        if uuidutils.is_uuid_like(name_or_id):
             search_opts.update({'id': name_or_id})
         else:
             search_opts.update({'name': name_or_id})
@@ -456,7 +461,7 @@ class API(base.Base):
     def allocate_floating_ip(self, context, pool=None):
         """Add a floating ip to a project from a pool."""
         client = quantumv2.get_client(context)
-        pool = pool or FLAGS.default_floating_pool
+        pool = pool or CONF.default_floating_pool
         pool_id = self._get_floating_ip_pool_id_by_name_or_id(client, pool)
 
         # TODO(amotoki): handle exception during create_floatingip()
@@ -532,6 +537,13 @@ class API(base.Base):
         if not networks:
             networks = self._get_available_networks(context,
                                                     instance['project_id'])
+        else:
+            # ensure ports are in preferred network order
+            _ensure_requested_network_ordering(
+                lambda x: x['network_id'],
+                ports,
+                [n['id'] for n in networks])
+
         nw_info = network_model.NetworkInfo()
         for port in ports:
             network_name = None
@@ -553,7 +565,7 @@ class API(base.Base):
             network = network_model.Network(
                 id=port['network_id'],
                 bridge='',  # Quantum ignores this field
-                injected=FLAGS.flat_injected,
+                injected=CONF.flat_injected,
                 label=network_name,
                 tenant_id=net['tenant_id']
             )
@@ -645,3 +657,9 @@ class API(base.Base):
     def create_public_dns_domain(self, context, domain, project=None):
         """Create a private DNS domain with optional nova project."""
         raise NotImplementedError()
+
+
+def _ensure_requested_network_ordering(accessor, unordered, preferred):
+    """Sort a list with respect to the preferred network ordering."""
+    if preferred:
+        unordered.sort(key=lambda i: preferred.index(accessor(i)))
