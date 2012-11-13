@@ -22,15 +22,15 @@ Class for PDU power manager.
 import subprocess
 import time
 
+from nova import config
 from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova import utils
 from nova.virt.baremetal import baremetal_states
 
-flags.DECLARE('tile_monitor', 'nova.virt.baremetal.tilera')
-
-FLAGS = flags.FLAGS
+CONF = config.CONF
+CONF.import_opt('tile_monitor', 'nova.virt.baremetal.tilera')
 
 LOG = logging.getLogger(__name__)
 

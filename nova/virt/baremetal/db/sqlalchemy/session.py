@@ -19,24 +19,9 @@
 
 """Session Handling for SQLAlchemy backend."""
 
-import time
-
-import sqlalchemy
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.pool import NullPool, StaticPool
-
-import nova.exception
-import nova.flags as flags
+from nova import config
+from nova.db.sqlalchemy import session as nova_session
 from nova.openstack.common import cfg
-from nova.openstack.common import log as logging
-
-from nova.db.sqlalchemy.session import add_regexp_listener
-from nova.db.sqlalchemy.session import debug_mysql_do_query
-from nova.db.sqlalchemy.session import get_maker
-from nova.db.sqlalchemy.session import greenthread_yield
-from nova.db.sqlalchemy.session import is_db_connection_error
-from nova.db.sqlalchemy.session import ping_listener
-from nova.db.sqlalchemy.session import synchronous_switch_listener
 
 opts = [
     cfg.StrOpt('baremetal_sql_connection',
@@ -45,10 +30,8 @@ opts = [
                     'bare-metal database'),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(opts)
-
-LOG = logging.getLogger(__name__)
+CONF = config.CONF
+CONF.register_opts(opts)
 
 _ENGINE = None
 _MAKER = None
@@ -60,11 +43,10 @@ def get_session(autocommit=True, expire_on_commit=False):
 
     if _MAKER is None:
         engine = get_engine()
-        _MAKER = get_maker(engine, autocommit, expire_on_commit)
+        _MAKER = nova_session.get_maker(engine, autocommit, expire_on_commit)
 
     session = _MAKER()
-    session.query = nova.exception.wrap_db_error(session.query)
-    session.flush = nova.exception.wrap_db_error(session.flush)
+    session = nova_session.wrap_session(session)
     return session
 
 
@@ -72,66 +54,5 @@ def get_engine():
     """Return a SQLAlchemy engine."""
     global _ENGINE
     if _ENGINE is None:
-        connection_dict = sqlalchemy.engine.url.make_url(
-                FLAGS.baremetal_sql_connection)
-
-        engine_args = {
-            "pool_recycle": FLAGS.sql_idle_timeout,
-            "echo": False,
-            'convert_unicode': True,
-        }
-
-        # Map our SQL debug level to SQLAlchemy's options
-        if FLAGS.sql_connection_debug >= 100:
-            engine_args['echo'] = 'debug'
-        elif FLAGS.sql_connection_debug >= 50:
-            engine_args['echo'] = True
-
-        if "sqlite" in connection_dict.drivername:
-            engine_args["poolclass"] = NullPool
-
-            if FLAGS.sql_connection == "sqlite://":
-                engine_args["poolclass"] = StaticPool
-                engine_args["connect_args"] = {'check_same_thread': False}
-
-        _ENGINE = sqlalchemy.create_engine(FLAGS.baremetal_sql_connection,
-                                           **engine_args)
-        sqlalchemy.event.listen(_ENGINE, 'checkin', greenthread_yield)
-
-        if 'mysql' in connection_dict.drivername:
-            sqlalchemy.event.listen(_ENGINE, 'checkout', ping_listener)
-        elif 'sqlite' in connection_dict.drivername:
-            if not FLAGS.sqlite_synchronous:
-                sqlalchemy.event.listen(_ENGINE, 'connect',
-                                        synchronous_switch_listener)
-            sqlalchemy.event.listen(_ENGINE, 'connect', add_regexp_listener)
-
-        if (FLAGS.sql_connection_trace and
-                _ENGINE.dialect.dbapi.__name__ == 'MySQLdb'):
-            import MySQLdb.cursors
-            _do_query = debug_mysql_do_query()
-            setattr(MySQLdb.cursors.BaseCursor, '_do_query', _do_query)
-
-        try:
-            _ENGINE.connect()
-        except OperationalError, e:
-            if not is_db_connection_error(e.args[0]):
-                raise
-
-            remaining = FLAGS.sql_max_retries
-            if remaining == -1:
-                remaining = 'infinite'
-            while True:
-                msg = _('SQL connection failed. %s attempts left.')
-                LOG.warn(msg % remaining)
-                if remaining != 'infinite':
-                    remaining -= 1
-                time.sleep(FLAGS.sql_retry_interval)
-                try:
-                    _ENGINE.connect()
-                    break
-                except OperationalError, e:
-                    if (remaining != 'infinite' and remaining == 0) or \
-                       not is_db_connection_error(e.args[0]):
-                        raise
+        _ENGINE = nova_session.create_engine(CONF.baremetal_sql_connection)
     return _ENGINE

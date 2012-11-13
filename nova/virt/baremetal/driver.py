@@ -22,16 +22,16 @@ A driver for Bare-metal platform.
 """
 
 from nova.compute import power_state
+from nova.compute import resource_tracker
+from nova import config
 from nova import context as nova_context
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 from nova.virt.baremetal import baremetal_states
 from nova.virt.baremetal import db as bmdb
-from nova.virt.baremetal import resource_trakcer as bmrt
 from nova.virt import driver
 from nova.virt import firewall
 from nova.virt.libvirt import imagecache
@@ -66,10 +66,11 @@ opts = [
                help='BareMetal compute node\'s tftp root path'),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(opts)
 
 LOG = logging.getLogger(__name__)
+
+CONF = config.CONF
+CONF.register_opts(opts)
 
 DEFAULT_FIREWALL_DRIVER = "%s.%s" % (
     firewall.__name__,
@@ -93,7 +94,7 @@ class NoSuitableNode(exception.NovaException):
 
 
 def _get_baremetal_nodes(context):
-    nodes = bmdb.bm_node_get_all(context, service_host=FLAGS.host)
+    nodes = bmdb.bm_node_get_all(context, service_host=CONF.host)
     return nodes
 
 
@@ -104,7 +105,7 @@ def _get_baremetal_node_by_instance_uuid(instance_uuid):
     node = bmdb.bm_node_get_by_instance_uuid(ctx, instance_uuid)
     if not node:
         return None
-    if node['service_host'] != FLAGS.host:
+    if node['service_host'] != CONF.host:
         return None
     return node
 
@@ -120,7 +121,7 @@ def _update_baremetal_state(context, node, instance, state):
 
 
 def get_power_manager(node, **kwargs):
-    cls = importutils.import_class(FLAGS.power_manager)
+    cls = importutils.import_class(CONF.power_manager)
     return cls(node, **kwargs)
 
 
@@ -135,18 +136,18 @@ class BareMetalDriver(driver.ComputeDriver):
         super(BareMetalDriver, self).__init__(virtapi)
 
         self.baremetal_nodes = importutils.import_object(
-                FLAGS.baremetal_driver)
+                CONF.baremetal_driver)
         self._vif_driver = importutils.import_object(
-                FLAGS.baremetal_vif_driver)
+                CONF.baremetal_vif_driver)
         self._firewall_driver = firewall.load_driver(
                 default=DEFAULT_FIREWALL_DRIVER)
         self._volume_driver = importutils.import_object(
-                FLAGS.baremetal_volume_driver)
+                CONF.baremetal_volume_driver)
         self._image_cache_manager = imagecache.ImageCacheManager()
 
         extra_specs = {}
-        extra_specs["baremetal_driver"] = FLAGS.baremetal_driver
-        for pair in FLAGS.instance_type_extra_specs:
+        extra_specs["baremetal_driver"] = CONF.baremetal_driver
+        for pair in CONF.instance_type_extra_specs:
             keyval = pair.split(':', 1)
             keyval[0] = keyval[0].strip()
             keyval[1] = keyval[1].strip()
@@ -200,15 +201,16 @@ class BareMetalDriver(driver.ComputeDriver):
         try:
             _update_baremetal_state(context, node, instance,
                                     baremetal_states.BUILDING)
-    
+
             var = self.baremetal_nodes.define_vars(instance, network_info,
                                                    block_device_info)
-    
+
             self._plug_vifs(instance, network_info, context=context)
-    
+
             self._firewall_driver.setup_basic_filtering(instance, network_info)
-            self._firewall_driver.prepare_instance_filter(instance, network_info)
-    
+            self._firewall_driver.prepare_instance_filter(instance,
+                                                          network_info)
+
             self.baremetal_nodes.create_image(var, context, image_meta, node,
                                               instance,
                                               injected_files=injected_files,
@@ -217,19 +219,20 @@ class BareMetalDriver(driver.ComputeDriver):
                                                      instance, image_meta)
             pm = get_power_manager(node)
             state = pm.activate_node()
-    
+
             _update_baremetal_state(context, node, instance, state)
-    
+
             self.baremetal_nodes.activate_node(var, context, node, instance)
             self._firewall_driver.apply_instance_filter(instance, network_info)
-    
+
             block_device_mapping = driver.block_device_info_get_mapping(
                 block_device_info)
             for vol in block_device_mapping:
                 connection_info = vol['connection_info']
                 mountpoint = vol['mount_device']
-                self.attach_volume(connection_info, instance['name'], mountpoint)
-    
+                self.attach_volume(connection_info, instance['name'],
+                                   mountpoint)
+
             pm.start_console()
         except Exception:
             _update_baremetal_state(context, node, instance,
@@ -394,7 +397,7 @@ class BareMetalDriver(driver.ComputeDriver):
         caps = []
         context = nova_context.get_admin_context()
         nodes = bmdb.bm_node_get_all(context,
-                                     service_host=FLAGS.host)
+                                     service_host=CONF.host)
         for node in nodes:
             res = self._node_resource(node)
             nodename = str(node['id'])
@@ -412,7 +415,7 @@ class BareMetalDriver(driver.ComputeDriver):
             data['hypervisor_hostname'] = nodename
             data['supported_instances'] = self._supported_instances
             data.update(self._extra_specs)
-            data['host'] = FLAGS.host
+            data['host'] = CONF.host
             data['node'] = nodename
             # TODO(NTTdocomo): put node's extra specs here
             caps.append(data)
@@ -449,6 +452,3 @@ class BareMetalDriver(driver.ComputeDriver):
     def get_available_nodes(self):
         context = nova_context.get_admin_context()
         return [str(n['id']) for n in _get_baremetal_nodes(context)]
-
-    def get_resource_tracker_class(self):
-        return bmrt.BareMetalResourceTracker

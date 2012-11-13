@@ -137,28 +137,6 @@ class HostManagerTestCase(test.TestCase):
                     ('host2', None): host2_cap}
         self.assertDictMatch(service_states, expected)
 
-    def test_update_service_capabilities_node_key(self):
-        service_states = self.host_manager.service_states
-        self.assertDictMatch(service_states, {})
-        self.mox.StubOutWithMock(timeutils, 'utcnow')
-        timeutils.utcnow().AndReturn(31337)
-        timeutils.utcnow().AndReturn(31338)
-
-        host1_cap = {'hypervisor_hostname': 'host1-hvhn'}
-        # node is not used in update_service_capabilities
-        host2_cap = {'node': 'host2-node'}
-
-        self.mox.ReplayAll()
-        self.host_manager.update_service_capabilities('compute', 'host1',
-                host1_cap)
-        self.host_manager.update_service_capabilities('compute', 'host2',
-                host2_cap)
-        host1_cap['timestamp'] = 31337
-        host2_cap['timestamp'] = 31338
-        expected = {'host1/host1-hvhn': {'compute': host1_cap},
-                    'host2': {'compute': host2_cap}}
-        self.assertDictMatch(service_states, expected)
-
     def test_get_all_host_states(self):
 
         context = 'fake_context'
@@ -348,13 +326,3 @@ class HostStateTestCase(test.TestCase):
         self.assertEqual(1, host.task_states[None])
         self.assertEqual(2, host.num_instances_by_os_type['Linux'])
         self.assertEqual(1, host.num_io_ops)
-
-    def test_nodename_set(self):
-        cap = {'faketopic': {'node': 'fakenode'}}
-        host = host_manager.HostState("fakehost", "faketopic",
-                                      capabilities=cap)
-        self.assertEqual('fakenode', host.nodename)
-
-    def test_nodename_not_set(self):
-        host = host_manager.HostState("fakehost", "faketopic")
-        self.assertTrue(host.nodename is None)

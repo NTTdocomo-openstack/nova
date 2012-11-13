@@ -14,7 +14,7 @@
 #    under the License.
 
 """
-Baremetal DB testcase for PXE IP
+Bare-metal DB testcase for BareMetalPxeIp
 """
 
 from nova import exception
@@ -83,10 +83,9 @@ class BareMetalPxeIpTestCase(base.BMDBTestCase):
 
     def test_delete_by_address(self):
         self._create_pxe_ip()
-        del_ref = db.bm_pxe_ip_destroy_by_address(self.context, '10.1.1.1')
-        self.assertTrue(del_ref is not None)
-        del_ref2 = db.bm_node_get(self.context, del_ref['id'])
-        self.assertTrue(del_ref2 is None)
+        db.bm_pxe_ip_destroy_by_address(self.context, '10.1.1.1')
+        del_ref = db.bm_pxe_ip_get(self.context, self.i1['id'])
+        self.assertTrue(del_ref is None)
 
     def test_delete_by_address_not_exist(self):
         self._create_pxe_ip()

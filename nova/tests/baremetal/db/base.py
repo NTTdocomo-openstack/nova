@@ -13,16 +13,33 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-"""Baremetal DB test base class."""
+"""Bare-metal DB test base class."""
 
+from nova import config
 from nova import context as nova_context
-from nova import flags
 from nova import test
-from nova.tests.baremetal.db import utils
+from nova.virt.baremetal.db import migration as bm_migration
+from nova.virt.baremetal.db.sqlalchemy import session as bm_session
+
+_DB = None
+
+CONF = config.CONF
+CONF.import_opt('baremetal_sql_connection',
+                'nova.virt.baremetal.db.sqlalchemy.session')
 
 
-flags.DECLARE('baremetal_sql_connection',
-              'nova.virt.baremetal.db.sqlalchemy.session')
+def _reset_bmdb():
+    global _DB
+    engine = bm_session.get_engine()
+    engine.dispose()
+    conn = engine.connect()
+    if _DB is None:
+        if bm_migration.db_version() > bm_migration.INIT_VERSION:
+            return
+        bm_migration.db_sync()
+        _DB = "".join(line for line in conn.connection.iterdump())
+    else:
+        conn.connection.executescript(_DB)
 
 
 class BMDBTestCase(test.TestCase):
@@ -30,5 +47,5 @@ class BMDBTestCase(test.TestCase):
     def setUp(self):
         super(BMDBTestCase, self).setUp()
         self.flags(baremetal_sql_connection='sqlite:///:memory:')
-        utils.clear_tables()
+        _reset_bmdb()
         self.context = nova_context.get_admin_context()

@@ -23,6 +23,7 @@ import mox
 from nova.db.sqlalchemy import models as nova_models
 from nova import flags
 from nova import test
+from nova.tests.baremetal.db import base
 from nova.tests.baremetal.db import utils
 from nova.tests.image import fake as fake_image
 from nova.tests import test_virt_drivers
@@ -100,7 +101,7 @@ class BaremetalDriverSpawnTestCase(test.TestCase):
 
     def setUp(self):
         self.flags(**COMMON_FLAGS)
-        utils.clear_tables()
+        base._reset_bmdb()
         super(BaremetalDriverSpawnTestCase, self).setUp()
         fake_image.stub_out_image_service(self.stubs)
 
@@ -163,7 +164,7 @@ class BaremetalDriverTestCase(test_virt_drivers._VirtDriverTestCase):
         # Point _VirtDriverTestCase at the right module
         self.driver_module = 'nova.virt.baremetal.BareMetalDriver'
         self.flags(**COMMON_FLAGS)
-        utils.clear_tables()
+        base._reset_bmdb()
         self.node = _create_baremetal_stuff()
         self.node_id = self.node['id']
         super(BaremetalDriverTestCase, self).setUp()

@@ -25,8 +25,8 @@ import shutil
 import subprocess
 import time
 
+from nova import config
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import fileutils
 from nova.openstack.common import log as logging
@@ -34,6 +34,7 @@ from nova import utils
 from nova.virt.baremetal import utils as bm_utils
 from nova.virt.disk import api as disk
 
+CONF = config.CONF
 
 LOG = logging.getLogger(__name__)
 
@@ -43,8 +44,7 @@ tilera_opts = [
                help='Tilera command line program for Bare-metal driver'),
             ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(tilera_opts)
+CONF.register_opts(tilera_opts)
 
 
 def get_baremetal_nodes():
@@ -65,15 +65,15 @@ def _late_load_cheetah():
 class TILERA(object):
 
     def __init__(self):
-        if not FLAGS.tile_monitor:
+        if not CONF.tile_monitor:
             raise exception.NovaException(
                     'tile_monitor is not defined')
 
     def define_vars(self, instance, network_info, block_device_info):
         var = {}
-        var['image_root'] = os.path.join(FLAGS.instances_path,
+        var['image_root'] = os.path.join(CONF.instances_path,
                                          instance['name'])
-        var['tftp_root'] = FLAGS.baremetal_tftp_root
+        var['tftp_root'] = CONF.baremetal_tftp_root
         var['network_info'] = network_info
         var['block_device_info'] = block_device_info
         return var
@@ -99,7 +99,7 @@ class TILERA(object):
             address_v6 = None
             gateway_v6 = None
             netmask_v6 = None
-            if FLAGS.use_ipv6:
+            if CONF.use_ipv6:
                 address_v6 = mapping['ip6s'][0]['ip']
                 netmask_v6 = mapping['ip6s'][0]['netmask']
                 gateway_v6 = mapping['gateway_v6']
@@ -116,11 +116,11 @@ class TILERA(object):
                    'hwaddress': mapping['mac']}
             nets.append(net_info)
 
-        ifc_template = open(FLAGS.baremetal_injected_network_template).read()
+        ifc_template = open(CONF.baremetal_injected_network_template).read()
         _late_load_cheetah()
         net = str(Template(ifc_template,
                            searchList=[{'interfaces': nets,
-                                        'use_ipv6': FLAGS.use_ipv6,
+                                        'use_ipv6': CONF.use_ipv6,
                                         }]))
         bootif_name = "eth0"
         net += "\n"
@@ -206,7 +206,7 @@ class TILERA(object):
 
         User can access the bare-metal node using ssh.
         """
-        cmd = (FLAGS.tile_monitor +
+        cmd = (CONF.tile_monitor +
                " --resume --net " + node_ip + " --run - " +
                "ifconfig xgbe0 hw ether " + mac_address +
                " - --wait --run - ifconfig xgbe0 " + ip_address +
@@ -219,7 +219,7 @@ class TILERA(object):
         """
         Sets and Runs sshd in the node.
         """
-        cmd = (FLAGS.tile_monitor +
+        cmd = (CONF.tile_monitor +
                " --resume --net " + node_ip + " --run - " +
                "/usr/sbin/sshd - --wait --quit")
         LOG.debug("cmd=%s", cmd)
@@ -264,12 +264,12 @@ class TILERA(object):
         Gets console output of the given node.
         """
         var = self.define_vars(instance, None, None)
-        console_log = os.path.join(FLAGS.instances_path, instance['name'],
+        console_log = os.path.join(CONF.instances_path, instance['name'],
                                    'console.log')
         tftp_root = var['tftp_root']
         node_ip = node['pm_address']
         log_path = tftp_root + "/log_" + str(node['id'])
-        kmsg_cmd = (FLAGS.tile_monitor +
+        kmsg_cmd = (CONF.tile_monitor +
                     " --resume --net " + node_ip +
                     " -- dmesg > " + log_path)
         subprocess.Popen(kmsg_cmd, shell=True)

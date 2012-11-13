@@ -26,13 +26,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.schema import ForeignKeyConstraint
 
-from nova import flags
-
 from nova.db.sqlalchemy import models
-from nova.virt.baremetal.db.sqlalchemy import session
 
 
-FLAGS = flags.FLAGS
 BASE = declarative_base()
 
 
@@ -54,15 +50,6 @@ class BareMetalNode(BASE, models.NovaBase):
     task_state = Column(String(255))
     prov_vlan_id = Column(Integer)
     terminal_port = Column(Integer)
-    __table_args__ = (
-            Index('idx_bm_nodes_service_host_deleted',
-                  'service_host', 'deleted'),
-            Index('idx_bm_nodes_instance_uuid_deleted',
-                  'instance_uuid', 'deleted'),
-            # maybe enough...
-            Index('idx_bm_nodes_hmcld', 'service_host', 'memory_mb',
-                  'cpus', 'local_gb', 'deleted'),
-            )
 
 
 class BareMetalPxeIp(BASE, models.NovaBase):
@@ -91,13 +78,3 @@ class BareMetalDeployment(BASE, models.NovaBase):
     pxe_config_path = Column(String(255))
     root_mb = Column(Integer)
     swap_mb = Column(Integer)
-
-
-def register_models():
-    engine = session.get_engine()
-    BASE.metadata.create_all(engine)
-
-
-def unregister_models():
-    engine = session.get_engine()
-    BASE.metadata.drop_all(engine)

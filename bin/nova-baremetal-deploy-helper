@@ -40,20 +40,20 @@ import socket
 import stat
 from wsgiref import simple_server
 
+from nova import config
 from nova import context as nova_context
-from nova import flags
 from nova.openstack.common import log as logging
 from nova import utils
 from nova.virt.baremetal import db
 
 
-flags.parse_args(sys.argv)
-logging.setup("nova")
-
-LOG = logging.getLogger('nova.virt.baremetal.deploy_server')
+LOG = logging.getLogger('nova.virt.baremetal.deploy_helper')
 
 QUEUE = Queue.Queue()
 
+
+# All functions are called from deploy() directly or indirectly.
+# They are split for stub-out.
 
 def discovery(portal_address, portal_port):
     """Do iSCSI discovery on portal"""
@@ -74,6 +74,7 @@ def login_iscsi(portal_address, portal_port, target_iqn):
                   '--login',
                   run_as_root=True,
                   check_exit_code=[0])
+    # Ensure the login complete
     time.sleep(3)
 
 
@@ -101,8 +102,8 @@ def make_partitions(dev, root_mb, swap_mb):
                       process_input=command,
                       run_as_root=True,
                       check_exit_code=[0])
-        # avoid busy
-        time.sleep(2)
+        # avoid "device is busy"
+        time.sleep(3)
 
 
 def is_block_device(dev):
@@ -139,7 +140,7 @@ def block_uuid(dev):
 
 
 def switch_pxe_config(path, root_uuid):
-    """Switch pxe config from deployment mode to service mode"""
+    """Switch a pxe config from deployment mode to service mode."""
     with open(path) as f:
         lines = f.readlines()
     root = 'UUID=%s' % root_uuid
@@ -153,7 +154,7 @@ def switch_pxe_config(path, root_uuid):
 
 
 def notify(address, port):
-    """Notify a node that the job is done"""
+    """Notify a node that it becomes ready to reboot."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.connect((address, port))
@@ -162,79 +163,99 @@ def notify(address, port):
         s.close()
 
 
-def deploy_work(address, port, iqn, lun, image_path, pxe_config_path, root_mb,
-                swap_mb):
-    """Top level method to setup node's disk"""
+def get_dev(address, port, iqn, lun):
+    """Returns a device path for given parameters."""
     dev = "/dev/disk/by-path/ip-%s:%s-iscsi-%s-lun-%s" \
             % (address, port, iqn, lun)
+    return dev
 
+
+def get_image_mb(image_path):
+    """Get size of an image in Megabyte."""
+    mb = 1024 * 1024
+    image_byte = os.path.getsize(image_path)
+    # round up size to MB
+    image_mb = int((image_byte + mb - 1) / mb)
+    return image_mb
+
+
+def work_on_disk(dev, root_mb, swap_mb, image_path):
+    """Creates partitions and write an image to the root partition."""
     root_part = "%s-part1" % dev
     swap_part = "%s-part2" % dev
 
-    mb = 1024 * 1024
-    image_byte = os.path.getsize(image_path)
-    image_mb = int((image_byte + mb - 1) / mb)
+    if not is_block_device(dev):
+        LOG.warn("parent device '%s' not found", dev)
+        return
+    make_partitions(dev, root_mb, swap_mb)
+    if not is_block_device(root_part):
+        LOG.warn("root device '%s' not found", root_part)
+        return
+    if not is_block_device(swap_part):
+        LOG.warn("swap device '%s' not found", swap_part)
+        return
+    dd(image_path, root_part)
+    mkswap(swap_part)
+    root_uuid = block_uuid(root_part)
+    return root_uuid
+
+
+def deploy(address, port, iqn, lun, image_path, pxe_config_path,
+           root_mb, swap_mb):
+    """All-in-one function to deploy a node."""
+    dev = get_dev(address, port, iqn, lun)
+    image_mb = get_image_mb(image_path)
     if image_mb > root_mb:
         root_mb = image_mb
-
     discovery(address, port)
     login_iscsi(address, port, iqn)
     try:
-        if not is_block_device(dev):
-            sys.exit(1)
-        make_partitions(dev, root_mb, swap_mb)
-        time.sleep(3)
-        if not is_block_device(root_part):
-            LOG.warn("root device '%s' not found", root_part)
-            return
-        if not is_block_device(swap_part):
-            LOG.warn("swap device '%s' not found", swap_part)
-            return
-        dd(image_path, root_part)
-        mkswap(swap_part)
-        root_uuid = block_uuid(root_part)
+        root_uuid = work_on_disk(dev, root_mb, swap_mb, image_path)
     finally:
         logout_iscsi(address, port, iqn)
     switch_pxe_config(pxe_config_path, root_uuid)
+    # Ensure the node started netcat on the port after POST the request.
+    time.sleep(3)
     notify(address, 10000)
 
 
-def get_deployment(context, dep_id):
-    """Get information of deployment from db"""
-    return db.bm_deployment_get(context, dep_id)
-
-
-def delete_deployment(context, dep_id):
-    """Delete information of deployment from db"""
-    return db.bm_deployment_destroy(context, dep_id)
-
-
 class Worker(threading.Thread):
-    """Handle requests in queue"""
+    """Thread that handles requests in queue"""
 
     def __init__(self):
-        threading.Thread.__init__(self)
+        super(Worker, self).__init__()
         self.setDaemon(True)
+        self.stop = False
+        self.queue_timeout = 1
 
     def run(self):
-        while True:
-            deployment_id, params = QUEUE.get()
-            LOG.info("new work: %s, %s", deployment_id, params)
-            time.sleep(5)
+        while not self.stop:
             try:
-                deploy_work(**params)
-            except Exception:
-                LOG.exception('deploy_work %s failed' % deployment_id)
-            context = nova_context.get_admin_context()
-            delete_deployment(context, deployment_id)
-            LOG.info("deployment %s done", deployment_id)
+                # Set timeout to check self.stop periodically
+                (deployment_id, params) = QUEUE.get(block=True,
+                                                    timeout=self.queue_timeout)
+            except Queue.Empty:
+                pass
+            else:
+                # Requests comes here from BareMetalDeploy.post()
+                LOG.info("start deployment: %s, %s", deployment_id, params)
+                try:
+                    deploy(**params)
+                except Exception:
+                    LOG.exception('deployment %s failed' % deployment_id)
+                else:
+                    LOG.info("deployment %s done", deployment_id)
+                finally:
+                    context = nova_context.get_admin_context()
+                    db.bm_deployment_destroy(context, deployment_id)
 
 
 class BareMetalDeploy(object):
     """WSGI server for bare-metal deployment"""
 
     def __init__(self):
-        pass
+        self.worker = Worker()
+        self.worker.start()
 
     def __call__(self, environ, start_response):
         method = environ['REQUEST_METHOD']
@@ -252,36 +273,47 @@ class BareMetalDeploy(object):
 
         x = inpt.read(length)
         q = dict(cgi.parse_qsl(x))
-        deployment_id = q['i']
-        deployment_key = q['k']
-        address = q['a']
-        port = '3260'
-        iqn = q['n']
-        lun = '1'
+        try:
+            deployment_id = q['i']
+            deployment_key = q['k']
+            address = q['a']
+            port = q.get('p', '3260')
+            iqn = q['n']
+            lun = q.get('l', '1')
+        except KeyError as e:
+            start_response('400 Bad Request', [('Content-type', 'text/plain')])
+            return "parameter '%s' is not defined" % e
 
         context = nova_context.get_admin_context()
-        d = get_deployment(context, deployment_id)
-        if d['key'] == deployment_key:
-            image_path = d['image_path']
-            pxe_config_path = d['pxe_config_path']
-            root_mb = int(d['root_mb'])
-            swap_mb = int(d['swap_mb'])
-            params = {'address': address,
-                      'port': port,
-                      'iqn': iqn,
-                      'lun': lun,
-                      'image_path': image_path,
-                      'pxe_config_path': pxe_config_path,
-                      'root_mb': root_mb,
-                      'swap_mb': swap_mb,
-                     }
-            QUEUE.put((deployment_id, params))
+        d = db.bm_deployment_get(context, deployment_id)
+
+        if d['key'] != deployment_key:
+            start_response('400 Bad Request', [('Content-type', 'text/plain')])
+            return 'key is not match'
+
+        params = {'address': address,
+                  'port': port,
+                  'iqn': iqn,
+                  'lun': lun,
+                  'image_path': d['image_path'],
+                  'pxe_config_path': d['pxe_config_path'],
+                  'root_mb': int(d['root_mb']),
+                  'swap_mb': int(d['swap_mb']),
+                 }
+        # Restart worker, if needed
+        if not self.worker.isAlive():
+            self.worker = Worker()
+            self.worker.start()
+        LOG.info("request is queued: %s, %s", deployment_id, params)
+        QUEUE.put((deployment_id, params))
+        # Requests go to Worker.run()
         start_response('200 OK', [('Content-type', 'text/plain')])
         return ''
 
 
 if __name__ == '__main__':
-    Worker().start()
+    config.parse_args(sys.argv)
+    logging.setup("nova")
     app = BareMetalDeploy()
     srv = simple_server.make_server('', 10000, app)
     srv.serve_forever()

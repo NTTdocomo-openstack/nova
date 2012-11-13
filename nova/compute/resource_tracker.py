@@ -149,48 +149,6 @@ class ResourceTracker(object):
     def disabled(self):
         return self.compute_node is None
 
-    def apply_instance_to_resources(self, resources, instance, sign):
-        """Update resources by instance and sign.
-        This method is overridden to modify the way to consume resources.
-        """
-        resources['memory_mb_used'] += sign * instance['memory_mb']
-        resources['local_gb_used'] += sign * instance['root_gb']
-        resources['local_gb_used'] += sign * instance['ephemeral_gb']
-
-    def _update_usage_from_instance(self, resources, instance):
-        """Update usage for a single instance."""
-
-        uuid = instance['uuid']
-        is_new_instance = uuid not in self.tracked_instances
-        is_deleted_instance = instance['vm_state'] == vm_states.DELETED
-
-        if is_new_instance:
-            self.tracked_instances[uuid] = 1
-            sign = 1
-
-        if is_deleted_instance:
-            self.tracked_instances.pop(uuid)
-            sign = -1
-
-        self.stats.update_stats_for_instance(instance)
-
-        # if it's a new or deleted instance:
-        if is_new_instance or is_deleted_instance:
-            # new instance, update compute node resource usage:
-            self.apply_instance_to_resources(resources, instance, sign)
-
-            # free ram and disk may be negative, depending on policy:
-            resources['free_ram_mb'] = (resources['memory_mb'] -
-                                        resources['memory_mb_used'])
-            resources['free_disk_gb'] = (resources['local_gb'] -
-                                         resources['local_gb_used'])
-
-            resources['running_vms'] = self.stats.num_instances
-            resources['vcpus_used'] = self.stats.num_vcpus_used
-
-        resources['current_workload'] = self.stats.calculate_workload()
-        resources['stats'] = self.stats
-
     @lockutils.synchronized(COMPUTE_RESOURCE_SEMAPHORE, 'nova-')
     def update_available_resource(self, context):
         """Override in-memory calculations of compute node resource usage based
@@ -300,6 +258,42 @@ class ResourceTracker(object):
         compute_node = db.compute_node_update(context,
                 self.compute_node['id'], values, prune_stats)
         self.compute_node = dict(compute_node)
+
+    def _update_usage_from_instance(self, resources, instance):
+        """Update usage for a single instance."""
+
+        uuid = instance['uuid']
+        is_new_instance = uuid not in self.tracked_instances
+        is_deleted_instance = instance['vm_state'] == vm_states.DELETED
+
+        if is_new_instance:
+            self.tracked_instances[uuid] = 1
+            sign = 1
+
+        if is_deleted_instance:
+            self.tracked_instances.pop(uuid)
+            sign = -1
+
+        self.stats.update_stats_for_instance(instance)
+
+        # if it's a new or deleted instance:
+        if is_new_instance or is_deleted_instance:
+            # new instance, update compute node resource usage:
+            resources['memory_mb_used'] += sign * instance['memory_mb']
+            resources['local_gb_used'] += sign * instance['root_gb']
+            resources['local_gb_used'] += sign * instance['ephemeral_gb']
+
+            # free ram and disk may be negative, depending on policy:
+            resources['free_ram_mb'] = (resources['memory_mb'] -
+                                        resources['memory_mb_used'])
+            resources['free_disk_gb'] = (resources['local_gb'] -
+                                         resources['local_gb_used'])
+
+            resources['running_vms'] = self.stats.num_instances
+            resources['vcpus_used'] = self.stats.num_vcpus_used
+
+        resources['current_workload'] = self.stats.calculate_workload()
+        resources['stats'] = self.stats
 
     def _update_usage_from_instances(self, resources, instances):
         """Calculate resource usage based on instance utilization.  This is

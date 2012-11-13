@@ -16,11 +16,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from nova import flags
 from nova.virt.baremetal import baremetal_states
-
-
-FLAGS = flags.FLAGS
 
 
 def get_baremetal_nodes():

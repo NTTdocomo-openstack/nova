@@ -14,7 +14,7 @@
 #    under the License.
 
 """
-Baremetal DB testcase for PhyHost
+Bare-Metal DB testcase for BareMetalNode
 """
 
 from nova.tests.baremetal.db import base
@@ -44,6 +44,10 @@ class BareMetalNodesTestCase(base.BMDBTestCase):
         for n in nodes:
             ref = db.bm_node_create(self.context, n)
             self.ids.append(ref['id'])
+
+    def test_get_all0(self):
+        r = db.bm_node_get_all(self.context)
+        self.assertEquals(r, [])
 
     def test_get_all(self):
         r = db.bm_node_get_all(self.context)
@@ -88,51 +92,6 @@ class BareMetalNodesTestCase(base.BMDBTestCase):
         r = db.bm_node_get_all(self.context, service_host="host3")
         self.assertEquals(r, [])
 
-    def test_get_by_instantiated(self):
-        self._create_nodes()
-
-        r = db.bm_node_get_all(self.context, instantiated=None)
-        self.assertEquals(len(r), 6)
-
-        r = db.bm_node_get_all(self.context, instantiated=True)
-        self.assertEquals(len(r), 1)
-        self.assertEquals(r[0]['pm_address'], '1')
-
-        r = db.bm_node_get_all(self.context, instantiated=False)
-        self.assertEquals(len(r), 5)
-        pmaddrs = [x['pm_address'] for x in r]
-        self.assertIn('0', pmaddrs)
-        self.assertIn('2', pmaddrs)
-        self.assertIn('3', pmaddrs)
-        self.assertIn('4', pmaddrs)
-        self.assertIn('5', pmaddrs)
-
-    def test_get_by_service_host_and_instantiated(self):
-        self._create_nodes()
-
-        r = db.bm_node_get_all(self.context, service_host='host1',
-                               instantiated=True)
-        self.assertEquals(len(r), 0)
-
-        r = db.bm_node_get_all(self.context, service_host='host1',
-                               instantiated=False)
-        self.assertEquals(len(r), 1)
-        self.assertEquals(r[0]['pm_address'], '0')
-
-        r = db.bm_node_get_all(self.context, service_host='host2',
-                               instantiated=True)
-        self.assertEquals(len(r), 1)
-        self.assertEquals(r[0]['pm_address'], '1')
-
-        r = db.bm_node_get_all(self.context, service_host='host2',
-                               instantiated=False)
-        self.assertEquals(len(r), 4)
-        pmaddrs = [x['pm_address'] for x in r]
-        self.assertIn('2', pmaddrs)
-        self.assertIn('3', pmaddrs)
-        self.assertIn('4', pmaddrs)
-        self.assertIn('5', pmaddrs)
-
     def test_destroy(self):
         self._create_nodes()
 
@@ -143,16 +102,6 @@ class BareMetalNodesTestCase(base.BMDBTestCase):
 
         r = db.bm_node_get_all(self.context)
         self.assertEquals(len(r), 5)
-
-    def test_sort(self):
-        self._create_nodes()
-        l = db.bm_node_get_all(self.context, 'host2', sort=True)
-        self.assertEqual(len(l), 5)
-        self.assertEqual(l[0]['pm_address'], '2')
-        self.assertEqual(l[1]['pm_address'], '3')
-        self.assertEqual(l[2]['pm_address'], '4')
-        self.assertEqual(l[3]['pm_address'], '5')
-        self.assertEqual(l[4]['pm_address'], '1')
 
     def test_find_free(self):
         self._create_nodes()

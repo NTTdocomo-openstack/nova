@@ -19,10 +19,7 @@ from migrate import ForeignKeyConstraint
 from sqlalchemy import Boolean, BigInteger, Column, DateTime, Float, ForeignKey
 from sqlalchemy import Index, Integer, MetaData, String, Table, Text
 
-from nova import flags
 from nova.openstack.common import log as logging
-
-FLAGS = flags.FLAGS
 
 LOG = logging.getLogger(__name__)
 
@@ -61,7 +58,7 @@ def upgrade(migrate_engine):
         Column('deleted', Boolean),
         Column('id', Integer, primary_key=True, nullable=False),
         Column('bm_node_id', Integer),
-        Column('address', String(length=255)),
+        Column('address', String(length=255), unique=True),
         Column('datapath_id', String(length=255)),
         Column('port_no', Integer),
         Column('vif_uuid', String(length=36), unique=True),
@@ -112,6 +109,14 @@ def upgrade(migrate_engine):
     Index('idx_bm_nodes_hmcld',
           bm_nodes.c.service_host, bm_nodes.c.memory_mb, bm_nodes.c.cpus,
           bm_nodes.c.local_gb, bm_nodes.c.deleted)\
+          .create(migrate_engine)
+
+    Index('idx_bm_interfaces_bm_node_id_deleted',
+          bm_interfaces.c.bm_node_id, bm_interfaces.c.deleted)\
+          .create(migrate_engine)
+
+    Index('idx_bm_pxe_ips_bm_node_id_deleted',
+          bm_pxe_ips.c.bm_node_id, bm_pxe_ips.c.deleted)\
           .create(migrate_engine)
 
 

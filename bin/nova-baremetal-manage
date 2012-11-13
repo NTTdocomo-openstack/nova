@@ -74,9 +74,9 @@ if os.path.exists(os.path.join(POSSIBLE_TOPDIR, 'nova', '__init__.py')):
 
 gettext.install('nova', unicode=1)
 
+from nova import config
 from nova import context
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
@@ -87,7 +87,7 @@ from nova import version
 from nova.virt.baremetal import db as bmdb
 from nova.virt.baremetal.db import migration as bmdb_migration
 
-FLAGS = flags.FLAGS
+CONF = config.CONF
 
 
 # Decorators for actions
@@ -105,11 +105,14 @@ class BareMetalDbCommands(object):
             help='Bare-metal Database version')
     def sync(self, version=None):
         """Sync the database up to the most recent version."""
-        return bmdb_migration.db_sync(version)
+        bmdb_migration.db_sync(version)
 
     def version(self):
         """Print the current database version."""
-        print bmdb_migration.db_version()
+        v = bmdb_migration.db_version()
+        print v
+        # return for unittest
+        return v
 
 
 class BareMetalNodeCommands(object):
@@ -348,10 +351,10 @@ def main():
     """Parse options and call the appropriate class/method."""
 
     try:
-        argv = flags.parse_args(sys.argv)
+        argv = config.parse_args(sys.argv)
         logging.setup("nova")
     except cfg.ConfigFilesNotFoundError:
-        cfgfile = FLAGS.config_file[-1] if FLAGS.config_file else None
+        cfgfile = CONF.config_file[-1] if CONF.config_file else None
         if cfgfile and not os.access(cfgfile, os.R_OK):
             st = os.stat(cfgfile)
             print _("Could not read %s. Re-running with sudo") % cfgfile
@@ -360,7 +363,7 @@ def main():
             except Exception:
                 print _('sudo failed, continuing as if nothing happened')
 
-        print _('Please re-run nova-manage as root.')
+        print _('Please re-run nova-baremetal-manage as root.')
         sys.exit(2)
 
     script_name = argv.pop(0)

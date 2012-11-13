@@ -14,7 +14,7 @@
 #    under the License.
 
 """
-Baremetal DB testcase for PXE IP
+Bare-metal DB testcase for BareMetalInterface
 """
 
 from nova import exception
@@ -22,7 +22,7 @@ from nova.tests.baremetal.db import base
 from nova.virt.baremetal import db
 
 
-class BareMetalPxeIpTestCase(base.BMDBTestCase):
+class BareMetalInterfaceTestCase(base.BMDBTestCase):
 
     def test_unique_address(self):
         pif1_id = db.bm_interface_create(self.context, 1, '11:11:11:11:11:11',
@@ -30,7 +30,6 @@ class BareMetalPxeIpTestCase(base.BMDBTestCase):
         self.assertRaises(exception.DBError,
                           db.bm_interface_create,
                           self.context, 2, '11:11:11:11:11:11', '0x2', 2)
-
         # succeed after delete pif1
         db.bm_interface_destroy(self.context, pif1_id)
         pif2_id = db.bm_interface_create(self.context, 2, '11:11:11:11:11:11',

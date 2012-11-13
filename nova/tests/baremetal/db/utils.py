@@ -13,14 +13,14 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-"""Baremetal test utils."""
+"""Bare-metal test utils."""
 
 from nova import test
-from nova.virt.baremetal.db.sqlalchemy import models
+from nova.virt.baremetal.db.sqlalchemy import models as bm_models
 
 
 def new_bm_node(**kwargs):
-    h = models.BareMetalNode()
+    h = bm_models.BareMetalNode()
     h.id = kwargs.pop('id', None)
     h.service_host = kwargs.pop('service_host', None)
     h.instance_uuid = kwargs.pop('instance_uuid', None)
@@ -42,7 +42,7 @@ def new_bm_node(**kwargs):
 
 
 def new_bm_pxe_ip(**kwargs):
-    x = models.BareMetalPxeIp()
+    x = bm_models.BareMetalPxeIp()
     x.id = kwargs.pop('id', None)
     x.address = kwargs.pop('address', None)
     x.server_address = kwargs.pop('server_address', None)
@@ -54,7 +54,7 @@ def new_bm_pxe_ip(**kwargs):
 
 
 def new_bm_interface(**kwargs):
-    x = models.BareMetalInterface()
+    x = bm_models.BareMetalInterface()
     x.id = kwargs.pop('id', None)
     x.bm_node_id = kwargs.pop('bm_node_id', None)
     x.address = kwargs.pop('address', None)
@@ -68,7 +68,7 @@ def new_bm_interface(**kwargs):
 
 
 def new_bm_deployment(**kwargs):
-    x = models.BareMetalDeployment()
+    x = bm_models.BareMetalDeployment()
     x.id = kwargs.pop('id', None)
     x.key = kwargs.pop('key', None)
     x.image_path = kwargs.pop('image_path', None)
@@ -79,8 +79,3 @@ def new_bm_deployment(**kwargs):
         raise test.TestingException("unknown field: %s"
                                     % ','.join(kwargs.keys()))
     return x
-
-
-def clear_tables():
-    models.unregister_models()
-    models.register_models()

@@ -306,8 +306,6 @@ class Instance(BASE, NovaBase):
     # EC2 disable_api_termination
     disable_terminate = Column(Boolean(), default=False, nullable=False)
 
-    node = Column(String(255))
-
 
 class InstanceInfoCache(BASE, NovaBase):
     """

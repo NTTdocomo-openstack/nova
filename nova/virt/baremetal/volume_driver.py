@@ -18,10 +18,10 @@
 
 import re
 
+from nova import config
 from nova import context as nova_context
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
@@ -40,15 +40,17 @@ opts = [
                help='iSCSI IQN prefix used in baremetal volume connections.'),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(opts)
+CONF = config.CONF
+CONF.register_opts(opts)
+
+CONF.import_opt('libvirt_volume_drivers', 'nova.virt.libvirt.driver')
 
 LOG = logging.getLogger(__name__)
 
 
 def _get_baremetal_node_by_instance_name(instance_name):
     context = nova_context.get_admin_context()
-    for node in bmdb.bm_node_get_all(context, service_host=FLAGS.host):
+    for node in bmdb.bm_node_get_all(context, service_host=CONF.host):
         if not node['instance_uuid']:
             continue
         try:
@@ -167,7 +169,7 @@ def _find_tid(iqn):
 
 def _get_iqn(instance_name, mountpoint):
     mp = mountpoint.replace('/', '-').strip('-')
-    iqn = '%s:%s-%s' % (FLAGS.baremetal_iscsi_iqn_prefix,
+    iqn = '%s:%s-%s' % (CONF.baremetal_iscsi_iqn_prefix,
                         instance_name,
                         mp)
     return iqn
@@ -186,9 +188,9 @@ class VolumeDriver(object):
                 LOG.warn(_('Could not determine iscsi initiator name'),
                          instance=instance)
         return {
-            'ip': FLAGS.my_ip,
+            'ip': CONF.my_ip,
             'initiator': self._initiator,
-            'host': FLAGS.host,
+            'host': CONF.host,
         }
 
     def attach_volume(self, connection_info, instance_name, mountpoint):
@@ -198,16 +200,13 @@ class VolumeDriver(object):
         raise NotImplementedError()
 
 
-flags.DECLARE('libvirt_volume_drivers', 'nova.virt.libvirt.driver')
-
-
 class LibvirtVolumeDriver(VolumeDriver):
     """The VolumeDriver deligates to nova.virt.libvirt.volume."""
 
     def __init__(self):
         super(LibvirtVolumeDriver, self).__init__()
         self.volume_drivers = {}
-        for driver_str in FLAGS.libvirt_volume_drivers:
+        for driver_str in CONF.libvirt_volume_drivers:
             driver_type, _sep, driver = driver_str.partition('=')
             driver_class = importutils.import_class(driver)
             self.volume_drivers[driver_type] = driver_class(self)
@@ -228,7 +227,7 @@ class LibvirtVolumeDriver(VolumeDriver):
         ctx = nova_context.get_admin_context()
         pxe_ip = bmdb.bm_pxe_ip_get_by_bm_node_id(ctx, node['id'])
         if not pxe_ip:
-            if not FLAGS.baremetal_use_unsafe_iscsi:
+            if not CONF.baremetal_use_unsafe_iscsi:
                 raise exception.NovaException(
                         "No fixed PXE IP is associated to %s" % instance_name)
         mount_device = mountpoint.rpartition("/")[2]
