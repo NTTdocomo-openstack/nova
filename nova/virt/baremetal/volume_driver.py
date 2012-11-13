@@ -20,7 +20,6 @@ import re
 
 from nova import config
 from nova import context as nova_context
-from nova import db
 from nova import exception
 from nova.openstack.common import cfg
 from nova.openstack.common import importutils
@@ -48,13 +47,13 @@ CONF.import_opt('libvirt_volume_drivers', 'nova.virt.libvirt.driver')
 LOG = logging.getLogger(__name__)
 
 
-def _get_baremetal_node_by_instance_name(instance_name):
+def _get_baremetal_node_by_instance_name(virtapi, instance_name):
     context = nova_context.get_admin_context()
     for node in bmdb.bm_node_get_all(context, service_host=CONF.host):
         if not node['instance_uuid']:
             continue
         try:
-            inst = db.instance_get_by_uuid(context, node['instance_uuid'])
+            inst = virtapi.instance_get_by_uuid(context, node['instance_uuid'])
             if inst['name'] == instance_name:
                 return node
         except exception.InstanceNotFound:
@@ -177,8 +176,9 @@ def _get_iqn(instance_name, mountpoint):
 
 class VolumeDriver(object):
 
-    def __init__(self):
+    def __init__(self, virtapi):
         super(VolumeDriver, self).__init__()
+        self.virtapi = virtapi
         self._initiator = None
 
     def get_volume_connector(self, instance):
@@ -203,8 +203,8 @@ class VolumeDriver(object):
 class LibvirtVolumeDriver(VolumeDriver):
     """The VolumeDriver deligates to nova.virt.libvirt.volume."""
 
-    def __init__(self):
-        super(LibvirtVolumeDriver, self).__init__()
+    def __init__(self, virtapi):
+        super(LibvirtVolumeDriver, self).__init__(virtapi)
         self.volume_drivers = {}
         for driver_str in CONF.libvirt_volume_drivers:
             driver_type, _sep, driver = driver_str.partition('=')
@@ -221,7 +221,8 @@ class LibvirtVolumeDriver(VolumeDriver):
         return method(connection_info, *args, **kwargs)
 
     def attach_volume(self, connection_info, instance_name, mountpoint):
-        node = _get_baremetal_node_by_instance_name(instance_name)
+        node = _get_baremetal_node_by_instance_name(self.virtapi,
+                                                    instance_name)
         if not node:
             raise exception.InstanceNotFound(instance_id=instance_name)
         ctx = nova_context.get_admin_context()

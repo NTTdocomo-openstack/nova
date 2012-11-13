@@ -22,10 +22,8 @@ A driver for Bare-metal platform.
 """
 
 from nova.compute import power_state
-from nova.compute import resource_tracker
 from nova import config
 from nova import context as nova_context
-from nova import db
 from nova import exception
 from nova.openstack.common import cfg
 from nova.openstack.common import importutils
@@ -142,7 +140,7 @@ class BareMetalDriver(driver.ComputeDriver):
         self._firewall_driver = firewall.load_driver(
                 default=DEFAULT_FIREWALL_DRIVER)
         self._volume_driver = importutils.import_object(
-                CONF.baremetal_volume_driver)
+                CONF.baremetal_volume_driver, virtapi)
         self._image_cache_manager = imagecache.ImageCacheManager()
 
         extra_specs = {}
@@ -181,7 +179,8 @@ class BareMetalDriver(driver.ComputeDriver):
         ctx = nova_context.get_admin_context()
         for node in _get_baremetal_nodes(ctx):
             if node['instance_uuid']:
-                inst = db.instance_get_by_uuid(ctx, node['instance_uuid'])
+                inst = self.virtapi.instance_get_by_uuid(ctx,
+                                                         node['instance_uuid'])
                 if inst:
                     l.append(inst['name'])
         return l

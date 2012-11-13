@@ -50,8 +50,8 @@ FakeFirewallDriver = NoopFirewallDriver
 
 
 class FakeVolumeDriver(volume_driver.VolumeDriver):
-    def __init__(self):
-        super(FakeVolumeDriver, self).__init__()
+    def __init__(self, virtapi):
+        super(FakeVolumeDriver, self).__init__(virtapi)
         self._initiator = "testtesttest"
 
 
