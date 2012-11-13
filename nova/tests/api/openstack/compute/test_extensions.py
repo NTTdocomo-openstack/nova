@@ -25,13 +25,14 @@ from nova.api.openstack.compute import extensions as compute_extensions
 from nova.api.openstack import extensions as base_extensions
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
+from nova import config
 from nova import flags
 from nova.openstack.common import jsonutils
 from nova import test
 from nova.tests.api.openstack import fakes
+from nova.tests import matchers
 
-
-FLAGS = flags.FLAGS
+CONF = config.CONF
 
 NS = "{http://docs.openstack.org/common/api/v1.0}"
 ATOMNS = "{http://www.w3.org/2005/Atom}"
@@ -141,7 +142,7 @@ class StubExtensionManager(object):
 class ExtensionTestCase(test.TestCase):
     def setUp(self):
         super(ExtensionTestCase, self).setUp()
-        ext_list = FLAGS.osapi_compute_extension[:]
+        ext_list = CONF.osapi_compute_extension[:]
         fox = ('nova.tests.api.openstack.compute.extensions.'
                'foxinsocks.Foxinsocks')
         if fox not in ext_list:
@@ -189,6 +190,7 @@ class ExtensionControllerTest(ExtensionTestCase):
             "SecurityGroups",
             "ServerDiagnostics",
             "ServerStartStop",
+            "Services",
             "SimpleTenantUsage",
             "UsedLimits",
             "UserData",
@@ -347,7 +349,7 @@ class ResourceExtensionTest(ExtensionTestCase):
                 "code": 400
             }
         }
-        self.assertDictMatch(expected, body)
+        self.assertThat(expected, matchers.DictMatches(body))
 
     def test_non_exist_resource(self):
         res_ext = base_extensions.ResourceExtension('tweedles',
@@ -365,7 +367,7 @@ class ResourceExtensionTest(ExtensionTestCase):
                 "code": 404
             }
         }
-        self.assertDictMatch(expected, body)
+        self.assertThat(expected, matchers.DictMatches(body))
 
 
 class InvalidExtension(object):
@@ -430,7 +432,7 @@ class ActionExtensionTest(ExtensionTestCase):
                 "code": 400
             }
         }
-        self.assertDictMatch(expected, body)
+        self.assertThat(expected, matchers.DictMatches(body))
 
     def test_non_exist_action(self):
         body = dict(blah=dict(name="test"))
@@ -451,7 +453,7 @@ class ActionExtensionTest(ExtensionTestCase):
                 "code": 400
             }
         }
-        self.assertDictMatch(expected, body)
+        self.assertThat(expected, matchers.DictMatches(body))
 
 
 class RequestExtensionTest(ExtensionTestCase):

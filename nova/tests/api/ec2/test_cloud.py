@@ -32,6 +32,7 @@ from nova.compute import api as compute_api
 from nova.compute import power_state
 from nova.compute import utils as compute_utils
 from nova.compute import vm_states
+from nova import config
 from nova import context
 from nova import db
 from nova import exception
@@ -43,13 +44,13 @@ from nova.openstack.common import rpc
 from nova import test
 from nova.tests import fake_network
 from nova.tests.image import fake
+from nova.tests import matchers
 from nova import utils
 from nova.virt import fake as fake_virt
 from nova import volume
 
-
+CONF = config.CONF
 LOG = logging.getLogger(__name__)
-FLAGS = flags.FLAGS
 
 
 def get_fake_cache():
@@ -71,7 +72,7 @@ def get_fake_cache():
                                                   floats=['1.2.3.4',
                                                           '5.6.7.8']),
                                               _ip('192.168.0.4')]}]}}]
-    if FLAGS.use_ipv6:
+    if CONF.use_ipv6:
         ipv6_addr = 'fe80:b33f::a8bb:ccff:fedd:eeff'
         info[0]['network']['subnets'].append({'cidr': 'fe80:b33f::/64',
                                               'ips': [_ip(ipv6_addr)]})
@@ -381,7 +382,7 @@ class CloudTestCase(test.TestCase):
 
     def test_security_group_quota_limit(self):
         self.flags(quota_security_groups=10)
-        for i in range(1, FLAGS.quota_security_groups + 1):
+        for i in range(1, CONF.quota_security_groups + 1):
             name = 'test name %i' % i
             descript = 'test description %i' % i
             create = self.cloud.create_security_group
@@ -963,7 +964,7 @@ class CloudTestCase(test.TestCase):
             for d2 in L2:
                 self.assertTrue(key in d2)
                 if d1[key] == d2[key]:
-                    self.assertDictMatch(d1, d2)
+                    self.assertThat(d1, matchers.DictMatches(d2))
 
     def _setUpImageSet(self, create_volumes_and_snapshots=False):
         mappings1 = [
@@ -1283,17 +1284,17 @@ class CloudTestCase(test.TestCase):
                     'imageType': 'machine',
                     'description': None}
         result = self.cloud._format_image(image)
-        self.assertDictMatch(result, expected)
+        self.assertThat(result, matchers.DictMatches(expected))
         image['properties']['image_location'] = None
         expected['imageLocation'] = 'None (name)'
         result = self.cloud._format_image(image)
-        self.assertDictMatch(result, expected)
+        self.assertThat(result, matchers.DictMatches(expected))
         image['name'] = None
         image['properties']['image_location'] = 'location'
         expected['imageLocation'] = 'location'
         expected['name'] = 'location'
         result = self.cloud._format_image(image)
-        self.assertDictMatch(result, expected)
+        self.assertThat(result, matchers.DictMatches(expected))
 
     def test_deregister_image(self):
         deregister_image = self.cloud.deregister_image
@@ -1333,7 +1334,7 @@ class CloudTestCase(test.TestCase):
     def test_console_output(self):
         instance_id = self._run_instance(
             image_id='ami-1',
-            instance_type=FLAGS.default_instance_type,
+            instance_type=CONF.default_instance_type,
             max_count=1)
         output = self.cloud.get_console_output(context=self.context,
                                                instance_id=[instance_id])
@@ -1446,7 +1447,7 @@ class CloudTestCase(test.TestCase):
 
     def test_run_instances(self):
         kwargs = {'image_id': 'ami-00000001',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1}
         run_instances = self.cloud.run_instances
 
@@ -1478,7 +1479,7 @@ class CloudTestCase(test.TestCase):
 
     def test_run_instances_availability_zone(self):
         kwargs = {'image_id': 'ami-00000001',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1,
                   'placement': {'availability_zone': 'fake'},
                  }
@@ -1514,7 +1515,7 @@ class CloudTestCase(test.TestCase):
 
     def test_run_instances_image_state_none(self):
         kwargs = {'image_id': 'ami-00000001',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1}
         run_instances = self.cloud.run_instances
 
@@ -1533,7 +1534,7 @@ class CloudTestCase(test.TestCase):
 
     def test_run_instances_image_state_invalid(self):
         kwargs = {'image_id': 'ami-00000001',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1}
         run_instances = self.cloud.run_instances
 
@@ -1553,8 +1554,8 @@ class CloudTestCase(test.TestCase):
                           self.context, **kwargs)
 
     def test_run_instances_image_status_active(self):
-        kwargs = {'image_id': FLAGS.default_image,
-                  'instance_type': FLAGS.default_instance_type,
+        kwargs = {'image_id': CONF.default_image,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1}
         run_instances = self.cloud.run_instances
 
@@ -1593,7 +1594,7 @@ class CloudTestCase(test.TestCase):
         self._restart_compute_service(periodic_interval=0.3)
 
         kwargs = {'image_id': 'ami-1',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1, }
         instance_id = self._run_instance(**kwargs)
 
@@ -1622,7 +1623,7 @@ class CloudTestCase(test.TestCase):
 
     def test_start_instances(self):
         kwargs = {'image_id': 'ami-1',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1, }
         instance_id = self._run_instance(**kwargs)
 
@@ -1644,7 +1645,7 @@ class CloudTestCase(test.TestCase):
 
     def test_stop_instances(self):
         kwargs = {'image_id': 'ami-1',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1, }
         instance_id = self._run_instance(**kwargs)
 
@@ -1663,7 +1664,7 @@ class CloudTestCase(test.TestCase):
 
     def test_terminate_instances(self):
         kwargs = {'image_id': 'ami-1',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1, }
         instance_id = self._run_instance(**kwargs)
 
@@ -1684,7 +1685,7 @@ class CloudTestCase(test.TestCase):
 
     def test_terminate_instances_invalid_instance_id(self):
         kwargs = {'image_id': 'ami-1',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1, }
         instance_id = self._run_instance(**kwargs)
 
@@ -1695,7 +1696,7 @@ class CloudTestCase(test.TestCase):
 
     def test_terminate_instances_disable_terminate(self):
         kwargs = {'image_id': 'ami-1',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1, }
         instance_id = self._run_instance(**kwargs)
 
@@ -1728,7 +1729,7 @@ class CloudTestCase(test.TestCase):
 
     def test_terminate_instances_two_instances(self):
         kwargs = {'image_id': 'ami-1',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1, }
         inst1 = self._run_instance(**kwargs)
         inst2 = self._run_instance(**kwargs)
@@ -1753,7 +1754,7 @@ class CloudTestCase(test.TestCase):
 
     def test_reboot_instances(self):
         kwargs = {'image_id': 'ami-1',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1, }
         instance_id = self._run_instance(**kwargs)
 
@@ -1799,7 +1800,7 @@ class CloudTestCase(test.TestCase):
             create_volumes_and_snapshots=True)
 
         kwargs = {'image_id': 'ami-1',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1}
         ec2_instance_id = self._run_instance(**kwargs)
 
@@ -1907,7 +1908,7 @@ class CloudTestCase(test.TestCase):
             create_volumes_and_snapshots=True)
 
         kwargs = {'image_id': 'ami-1',
-                  'instance_type': FLAGS.default_instance_type,
+                  'instance_type': CONF.default_instance_type,
                   'max_count': 1}
         ec2_instance_id = self._run_instance(**kwargs)
 
@@ -2074,7 +2075,7 @@ class CloudTestCase(test.TestCase):
         def test_dia_iisb(expected_result, **kwargs):
             """test describe_instance_attribute
             attribute instance_initiated_shutdown_behavior"""
-            kwargs.update({'instance_type': FLAGS.default_instance_type,
+            kwargs.update({'instance_type': CONF.default_instance_type,
                            'max_count': 1})
             instance_id = self._run_instance(**kwargs)
 

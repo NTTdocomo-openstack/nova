@@ -18,21 +18,22 @@ from lxml import etree
 from nova.api.openstack.compute.contrib import cloudpipe
 from nova.api.openstack import wsgi
 from nova.compute import utils as compute_utils
+from nova import config
 from nova import db
 from nova import flags
 from nova.openstack.common import timeutils
 from nova import test
 from nova.tests.api.openstack import fakes
 from nova.tests import fake_network
+from nova.tests import matchers
 from nova import utils
 
-
-FLAGS = flags.FLAGS
+CONF = config.CONF
 
 
 def fake_vpn_instance():
     return {
-        'id': 7, 'image_ref': FLAGS.vpn_image_id, 'vm_state': 'active',
+        'id': 7, 'image_ref': CONF.vpn_image_id, 'vm_state': 'active',
         'created_at': timeutils.parse_strtime('1981-10-20T00:00:00.000000'),
         'uuid': 7777, 'project_id': 'other',
     }
@@ -108,7 +109,7 @@ class CloudpipeTest(test.TestCase):
                                     'state': 'running',
                                     'instance_id': 7777,
                                     'created_at': '1981-10-20T00:00:00Z'}]}
-        self.assertDictMatch(res_dict, response)
+        self.assertThat(res_dict, matchers.DictMatches(response))
 
     def test_cloudpipe_create(self):
         def launch_vpn_instance(context):

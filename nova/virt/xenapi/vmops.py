@@ -32,7 +32,6 @@ from nova.compute import vm_mode
 from nova.compute import vm_states
 from nova import config
 from nova import context as nova_context
-from nova import db
 from nova import exception
 from nova import flags
 from nova.openstack.common import cfg
@@ -151,7 +150,8 @@ class VMOps(object):
         self._virtapi = virtapi
         self.poll_rescue_last_ran = None
         self.firewall_driver = firewall.load_driver(
-            default=DEFAULT_FIREWALL_DRIVER,
+            DEFAULT_FIREWALL_DRIVER,
+            self._virtapi,
             xenapi_session=self._session)
         vif_impl = importutils.import_class(CONF.xenapi_vif_driver)
         self.vif_driver = vif_impl(xenapi_session=self._session)
@@ -238,10 +238,10 @@ class VMOps(object):
                                   False, False)
 
     def _create_disks(self, context, instance, name_label, disk_image_type,
-                      block_device_info=None):
+                      image_meta, block_device_info=None):
         vdis = vm_utils.get_vdis_for_instance(context, self._session,
                                           instance, name_label,
-                                          instance['image_ref'],
+                                          image_meta['id'],
                                           disk_image_type,
                                           block_device_info=block_device_info)
         # Just get the VDI ref once
@@ -269,9 +269,10 @@ class VMOps(object):
             return vm_utils.determine_disk_image_type(image_meta)
 
         @step
-        def create_disks_step(undo_mgr, disk_image_type):
+        def create_disks_step(undo_mgr, disk_image_type, image_meta):
             vdis = self._create_disks(context, instance, name_label,
-                                      disk_image_type, block_device_info)
+                                      disk_image_type, image_meta,
+                                      block_device_info)
 
             def undo_create_disks():
                 vdi_refs = [vdi['ref'] for vdi in vdis.values()
@@ -387,7 +388,7 @@ class VMOps(object):
             bdev_set_default_root(undo_mgr)
             disk_image_type = determine_disk_image_type_step(undo_mgr)
 
-            vdis = create_disks_step(undo_mgr, disk_image_type)
+            vdis = create_disks_step(undo_mgr, disk_image_type, image_meta)
             kernel_file, ramdisk_file = create_kernel_ramdisk_step(undo_mgr)
             vm_ref = create_vm_record_step(undo_mgr, vdis, disk_image_type,
                     kernel_file, ramdisk_file)
@@ -536,7 +537,7 @@ class VMOps(object):
             greenthread.sleep(0.5)
 
         if self.agent_enabled:
-            agent_build = db.agent_build_get_by_triple(
+            agent_build = self._virtapi.agent_build_get_by_triple(
                 ctx, 'xen', instance['os_type'], instance['architecture'])
             if agent_build:
                 LOG.info(_('Latest agent build for %(hypervisor)s/%(os)s'
@@ -692,8 +693,7 @@ class VMOps(object):
                   instance=instance)
 
         # 2. Power down the instance before resizing
-        vm_utils.shutdown_vm(
-                self._session, instance, vm_ref, hard=False)
+        vm_utils.clean_shutdown_vm(self._session, instance, vm_ref)
         self._update_instance_progress(context, instance,
                                        step=2,
                                        total_steps=RESIZE_TOTAL_STEPS)
@@ -740,8 +740,7 @@ class VMOps(object):
                                                total_steps=RESIZE_TOTAL_STEPS)
 
         # 3. Now power down the instance
-        vm_utils.shutdown_vm(
-                self._session, instance, vm_ref, hard=False)
+        vm_utils.clean_shutdown_vm(self._session, instance, vm_ref)
         self._update_instance_progress(context, instance,
                                        step=3,
                                        total_steps=RESIZE_TOTAL_STEPS)
@@ -1074,7 +1073,7 @@ class VMOps(object):
                         instance=instance)
             return
 
-        vm_utils.shutdown_vm(self._session, instance, vm_ref)
+        vm_utils.hard_shutdown_vm(self._session, instance, vm_ref)
 
         # Destroy VDIs
         self._detach_vm_vols(instance, vm_ref, block_device_info)
@@ -1125,7 +1124,7 @@ class VMOps(object):
                                % instance['name'])
 
         vm_ref = self._get_vm_opaque_ref(instance)
-        vm_utils.shutdown_vm(self._session, instance, vm_ref)
+        vm_utils.hard_shutdown_vm(self._session, instance, vm_ref)
         self._acquire_bootlock(vm_ref)
         self.spawn(context, instance, image_meta, [], rescue_password,
                    network_info, name_label=rescue_name_label, rescue=True)
@@ -1158,7 +1157,7 @@ class VMOps(object):
             LOG.warning(_("VM is not present, skipping soft delete..."),
                         instance=instance)
         else:
-            vm_utils.shutdown_vm(self._session, instance, vm_ref, hard=True)
+            vm_utils.hard_shutdown_vm(self._session, instance, vm_ref)
             self._acquire_bootlock(vm_ref)
 
     def restore(self, instance):
@@ -1170,7 +1169,7 @@ class VMOps(object):
     def power_off(self, instance):
         """Power off the specified instance."""
         vm_ref = self._get_vm_opaque_ref(instance)
-        vm_utils.shutdown_vm(self._session, instance, vm_ref, hard=True)
+        vm_utils.hard_shutdown_vm(self._session, instance, vm_ref)
 
     def power_on(self, instance):
         """Power on the specified instance."""
@@ -1538,8 +1537,8 @@ class VMOps(object):
                                                network_info=network_info)
 
     def _get_host_uuid_from_aggregate(self, context, hostname):
-        current_aggregate = db.aggregate_get_by_host(context, CONF.host,
-               key=pool_states.POOL_FLAG)[0]
+        current_aggregate = self._virtapi.aggregate_get_by_host(
+            context, CONF.host, key=pool_states.POOL_FLAG)[0]
         if not current_aggregate:
             raise exception.AggregateHostNotFound(host=CONF.host)
         try:

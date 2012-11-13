@@ -22,6 +22,7 @@ from nova.api.openstack.compute import servers
 from nova.compute import api as compute_api
 from nova.compute import task_states
 from nova.compute import vm_states
+from nova import config
 from nova import db
 from nova import exception
 from nova import flags
@@ -30,10 +31,10 @@ from nova.openstack.common import importutils
 from nova import test
 from nova.tests.api.openstack import fakes
 from nova.tests.image import fake
+from nova.tests import matchers
 from nova import utils
 
-
-FLAGS = flags.FLAGS
+CONF = config.CONF
 FAKE_UUID = fakes.FAKE_UUID
 INSTANCE_IDS = {FAKE_UUID: 1}
 
@@ -209,7 +210,7 @@ class ServerActionsControllerTest(test.TestCase):
 
         self.assertEqual(body['server']['image']['id'], '2')
         self.assertEqual(len(body['server']['adminPass']),
-                         FLAGS.password_length)
+                         CONF.password_length)
 
         self.assertEqual(robj['location'], self_href)
 
@@ -825,7 +826,7 @@ class ServerActionsControllerTest(test.TestCase):
                 'metadata': {},
             },
         }
-        for num in range(FLAGS.quota_metadata_items + 1):
+        for num in range(CONF.quota_metadata_items + 1):
             body['createImage']['metadata']['foo%i' % num] = "bar"
 
         req = fakes.HTTPRequest.blank(self.url)
@@ -1052,7 +1053,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 ],
             },
         }
-        self.assertDictMatch(request['body'], expected)
+        self.assertThat(request['body'], matchers.DictMatches(expected))
 
     def test_rebuild_minimum(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -1065,7 +1066,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 "imageRef": "http://localhost/images/1",
             },
         }
-        self.assertDictMatch(request['body'], expected)
+        self.assertThat(request['body'], matchers.DictMatches(expected))
 
     def test_rebuild_no_imageRef(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>

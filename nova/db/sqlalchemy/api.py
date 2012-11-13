@@ -37,6 +37,7 @@ from sqlalchemy.sql import func
 from nova import block_device
 from nova.common.sqlalchemyutils import paginate_query
 from nova.compute import vm_states
+from nova import config
 from nova import db
 from nova.db.sqlalchemy import models
 from nova.db.sqlalchemy.session import get_session
@@ -48,7 +49,7 @@ from nova.openstack.common import uuidutils
 from nova import utils
 
 
-FLAGS = flags.FLAGS
+CONF = config.CONF
 
 LOG = logging.getLogger(__name__)
 
@@ -298,7 +299,7 @@ def service_destroy(context, service_id):
         service_ref = service_get(context, service_id, session=session)
         service_ref.delete(session=session)
 
-        if (service_ref.topic == FLAGS.compute_topic and
+        if (service_ref.topic == CONF.compute_topic and
             service_ref.compute_node):
             for c in service_ref.compute_node:
                 c.delete(session=session)
@@ -355,7 +356,7 @@ def service_get_all_compute_by_host(context, host):
     result = model_query(context, models.Service, read_deleted="no").\
                 options(joinedload('compute_node')).\
                 filter_by(host=host).\
-                filter_by(topic=FLAGS.compute_topic).\
+                filter_by(topic=CONF.compute_topic).\
                 all()
 
     if not result:
@@ -388,7 +389,7 @@ def service_get_all_compute_sorted(context):
         #             (SELECT host, SUM(instances.vcpus) AS instance_cores
         #              FROM instances GROUP BY host) AS inst_cores
         #             ON services.host = inst_cores.host
-        topic = FLAGS.compute_topic
+        topic = CONF.compute_topic
         label = 'instance_cores'
         subq = model_query(context, models.Instance.host,
                            func.sum(models.Instance.vcpus).label(label),
@@ -419,7 +420,7 @@ def service_get_by_args(context, host, binary):
 def service_create(context, values):
     service_ref = models.Service()
     service_ref.update(values)
-    if not FLAGS.enable_new_services:
+    if not CONF.enable_new_services:
         service_ref.disabled = True
     service_ref.save()
     return service_ref
@@ -1230,12 +1231,12 @@ def _virtual_interface_query(context, session=None):
 
 
 @require_context
-def virtual_interface_get(context, vif_id, session=None):
+def virtual_interface_get(context, vif_id):
     """Gets a virtual interface from the table.
 
     :param vif_id: = id of the virtual interface
     """
-    vif_ref = _virtual_interface_query(context, session=session).\
+    vif_ref = _virtual_interface_query(context).\
                       filter_by(id=vif_id).\
                       first()
     return vif_ref
@@ -1295,10 +1296,9 @@ def virtual_interface_delete(context, vif_id):
 
     :param vif_id: = id of vif to delete
     """
-    session = get_session()
-    vif_ref = virtual_interface_get(context, vif_id, session)
-    with session.begin():
-        session.delete(vif_ref)
+    _virtual_interface_query(context).\
+                      filter_by(id=vif_id).\
+                      delete()
 
 
 @require_context
@@ -1308,9 +1308,9 @@ def virtual_interface_delete_by_instance(context, instance_uuid):
 
     :param instance_uuid: = uuid of instance
     """
-    vif_refs = virtual_interface_get_by_instance(context, instance_uuid)
-    for vif_ref in vif_refs:
-        virtual_interface_delete(context, vif_ref['id'])
+    _virtual_interface_query(context).\
+           filter_by(instance_uuid=instance_uuid).\
+           delete()
 
 
 @require_context
@@ -1461,7 +1461,8 @@ def _build_instance_get(context, session=None):
             options(joinedload_all('security_groups.rules')).\
             options(joinedload('info_cache')).\
             options(joinedload('metadata')).\
-            options(joinedload('instance_type'))
+            options(joinedload('instance_type')).\
+            options(joinedload('system_metadata'))
 
 
 @require_context
@@ -1494,6 +1495,7 @@ def instance_get_all_by_filters(context, filters, sort_key, sort_dir,
     query_prefix = session.query(models.Instance).\
             options(joinedload('info_cache')).\
             options(joinedload('security_groups')).\
+            options(joinedload('system_metadata')).\
             options(joinedload('metadata')).\
             options(joinedload('instance_type')).\
             order_by(sort_fn[sort_dir](getattr(models.Instance, sort_key)))
@@ -1569,7 +1571,7 @@ def regex_filter(query, model, filters):
         'oracle': 'REGEXP_LIKE',
         'sqlite': 'REGEXP'
     }
-    db_string = FLAGS.sql_connection.split(':')[0].split('+')[0]
+    db_string = CONF.sql_connection.split(':')[0].split('+')[0]
     db_regexp_op = regexp_op_map.get(db_string, 'LIKE')
     for filter_name in filters.iterkeys():
         try:
@@ -2323,9 +2325,8 @@ def iscsi_target_create_safe(context, values):
 
 
 @require_context
-def quota_get(context, project_id, resource, session=None):
-    result = model_query(context, models.Quota, session=session,
-                         read_deleted="no").\
+def quota_get(context, project_id, resource):
+    result = model_query(context, models.Quota, read_deleted="no").\
                      filter_by(project_id=project_id).\
                      filter_by(resource=resource).\
                      first()
@@ -2363,20 +2364,21 @@ def quota_create(context, project_id, resource, limit):
 
 @require_admin_context
 def quota_update(context, project_id, resource, limit):
-    session = get_session()
-    with session.begin():
-        quota_ref = quota_get(context, project_id, resource, session=session)
-        quota_ref.hard_limit = limit
-        quota_ref.save(session=session)
+    result = model_query(context, models.Quota, read_deleted="no").\
+                     filter_by(project_id=project_id).\
+                     filter_by(resource=resource).\
+                     update({'hard_limit': limit})
+
+    if not result:
+        raise exception.ProjectQuotaNotFound(project_id=project_id)
 
 
 ###################
 
 
 @require_context
-def quota_class_get(context, class_name, resource, session=None):
-    result = model_query(context, models.QuotaClass, session=session,
-                         read_deleted="no").\
+def quota_class_get(context, class_name, resource):
+    result = model_query(context, models.QuotaClass, read_deleted="no").\
                      filter_by(class_name=class_name).\
                      filter_by(resource=resource).\
                      first()
@@ -2414,21 +2416,21 @@ def quota_class_create(context, class_name, resource, limit):
 
 @require_admin_context
 def quota_class_update(context, class_name, resource, limit):
-    session = get_session()
-    with session.begin():
-        quota_class_ref = quota_class_get(context, class_name, resource,
-                                          session=session)
-        quota_class_ref.hard_limit = limit
-        quota_class_ref.save(session=session)
+    result = model_query(context, models.QuotaClass, read_deleted="no").\
+                     filter_by(class_name=class_name).\
+                     filter_by(resource=resource).\
+                     update({'hard_limit': limit})
+
+    if not result:
+        raise exception.QuotaClassNotFound(class_name=class_name)
 
 
 ###################
 
 
 @require_context
-def quota_usage_get(context, project_id, resource, session=None):
-    result = model_query(context, models.QuotaUsage, session=session,
-                         read_deleted="no").\
+def quota_usage_get(context, project_id, resource):
+    result = model_query(context, models.QuotaUsage, read_deleted="no").\
                      filter_by(project_id=project_id).\
                      filter_by(resource=resource).\
                      first()
@@ -2456,6 +2458,13 @@ def quota_usage_get_all_by_project(context, project_id):
 
 @require_admin_context
 def quota_usage_create(context, project_id, resource, in_use, reserved,
+                       until_refresh):
+    return _quota_usage_create(context, project_id, resource, in_use,
+                                reserved, until_refresh)
+
+
+@require_admin_context
+def _quota_usage_create(context, project_id, resource, in_use, reserved,
                        until_refresh, session=None):
     quota_usage_ref = models.QuotaUsage()
     quota_usage_ref.project_id = project_id
@@ -2463,40 +2472,37 @@ def quota_usage_create(context, project_id, resource, in_use, reserved,
     quota_usage_ref.in_use = in_use
     quota_usage_ref.reserved = reserved
     quota_usage_ref.until_refresh = until_refresh
+
     quota_usage_ref.save(session=session)
 
     return quota_usage_ref
 
 
 @require_admin_context
-def quota_usage_update(context, project_id, resource, session=None, **kwargs):
-    def do_update(session):
-        quota_usage_ref = quota_usage_get(context, project_id, resource,
-                                          session=session)
-        if 'in_use' in kwargs:
-            quota_usage_ref.in_use = kwargs['in_use']
-        if 'reserved' in kwargs:
-            quota_usage_ref.reserved = kwargs['reserved']
-        if 'until_refresh' in kwargs:
-            quota_usage_ref.until_refresh = kwargs['until_refresh']
-        quota_usage_ref.save(session=session)
+def quota_usage_update(context, project_id, resource, **kwargs):
+    updates = {}
+    if 'in_use' in kwargs:
+        updates['in_use'] = kwargs['in_use']
+    if 'reserved' in kwargs:
+        updates['reserved'] = kwargs['reserved']
+    if 'until_refresh' in kwargs:
+        updates['until_refresh'] = kwargs['until_refresh']
 
-    if session:
-        # Assume caller started a transaction
-        do_update(session)
-    else:
-        session = get_session()
-        with session.begin():
-            do_update(session)
+    result = model_query(context, models.QuotaUsage, read_deleted="no").\
+                     filter_by(project_id=project_id).\
+                     filter_by(resource=resource).\
+                     update(updates)
+
+    if not result:
+        raise exception.QuotaUsageNotFound(project_id=project_id)
 
 
 ###################
 
 
 @require_context
-def reservation_get(context, uuid, session=None):
-    result = model_query(context, models.Reservation, session=session,
-                         read_deleted="no").\
+def reservation_get(context, uuid):
+    result = model_query(context, models.Reservation, read_deleted="no").\
                      filter_by(uuid=uuid).\
                      first()
 
@@ -2522,10 +2528,12 @@ def reservation_create(context, uuid, usage, project_id, resource, delta,
 
 @require_admin_context
 def reservation_destroy(context, uuid):
-    session = get_session()
-    with session.begin():
-        reservation_ref = reservation_get(context, uuid, session=session)
-        reservation_ref.delete(session=session)
+    result = model_query(context, models.Reservation, read_deleted="no").\
+                     filter_by(uuid=uuid).\
+                     delete()
+
+    if not result:
+        raise exception.ReservationNotFound(uuid=uuid)
 
 
 ###################
@@ -2564,7 +2572,7 @@ def quota_reserve(context, resources, quotas, deltas, expire,
             # Do we need to refresh the usage?
             refresh = False
             if resource not in usages:
-                usages[resource] = quota_usage_create(elevated,
+                usages[resource] = _quota_usage_create(elevated,
                                                       context.project_id,
                                                       resource,
                                                       0, 0,
@@ -2592,7 +2600,7 @@ def quota_reserve(context, resources, quotas, deltas, expire,
                 for res, in_use in updates.items():
                     # Make sure we have a destination for the usage!
                     if res not in usages:
-                        usages[res] = quota_usage_create(elevated,
+                        usages[res] = _quota_usage_create(elevated,
                                                          context.project_id,
                                                          res,
                                                          0, 0,

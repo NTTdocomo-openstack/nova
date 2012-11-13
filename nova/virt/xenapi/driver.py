@@ -48,7 +48,6 @@ from eventlet import timeout
 
 from nova import config
 from nova import context
-from nova import db
 from nova import exception
 from nova import flags
 from nova.openstack.common import cfg
@@ -138,14 +137,14 @@ class XenAPIDriver(driver.ComputeDriver):
                               'xenapi_connection_password to use '
                               'compute_driver=xenapi.XenAPIDriver'))
 
-        self._session = XenAPISession(url, username, password)
+        self._session = XenAPISession(url, username, password, self.virtapi)
         self._volumeops = volumeops.VolumeOps(self._session)
         self._host_state = None
         self._host = host.Host(self._session, self.virtapi)
         self._vmops = vmops.VMOps(self._session, self.virtapi)
         self._initiator = None
         self._hypervisor_hostname = None
-        self._pool = pool.ResourcePool(self._session)
+        self._pool = pool.ResourcePool(self._session, self.virtapi)
 
     @property
     def host_state(self):
@@ -617,7 +616,7 @@ class XenAPIDriver(driver.ComputeDriver):
 class XenAPISession(object):
     """The session to invoke XenAPI SDK calls"""
 
-    def __init__(self, url, user, pw):
+    def __init__(self, url, user, pw, virtapi):
         import XenAPI
         self.XenAPI = XenAPI
         self._sessions = queue.Queue()
@@ -629,6 +628,7 @@ class XenAPISession(object):
         self.host_uuid = self._get_host_uuid()
         self.product_version, self.product_brand = \
             self._get_product_version_and_brand()
+        self._virtapi = virtapi
 
     def _create_first_session(self, url, user, pw, exception):
         try:
@@ -657,8 +657,9 @@ class XenAPISession(object):
 
     def _get_host_uuid(self):
         if self.is_slave:
-            aggr = db.aggregate_get_by_host(context.get_admin_context(),
-                    CONF.host, key=pool_states.POOL_FLAG)[0]
+            aggr = self._virtapi.aggregate_get_by_host(
+                context.get_admin_context(),
+                CONF.host, key=pool_states.POOL_FLAG)[0]
             if not aggr:
                 LOG.error(_('Host is member of a pool, but DB '
                                 'says otherwise'))

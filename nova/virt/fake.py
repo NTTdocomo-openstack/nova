@@ -396,3 +396,32 @@ class FakeVirtAPI(virtapi.VirtAPI):
 
     def instance_get_all_by_host(self, context, host):
         return db.instance_get_all_by_host(context, host)
+
+    def aggregate_get_by_host(self, context, host, key=None):
+        return db.aggregate_get_by_host(context, host, key)
+
+    def aggregate_metadata_get(self, context, aggregate_id):
+        return db.aggregate_metadata_get(context, aggregate_id)
+
+    def aggregate_metadata_add(self, context, aggregate_id, metadata,
+                               set_delete=False):
+        return db.aggregate_metadata_add(context, aggregate_id, metadata,
+                                         set_delete)
+
+    def aggregate_metadata_delete(self, context, aggregate_id, key):
+        return db.aggregate_metadata_delete(context, aggregate_id, key)
+
+    def security_group_get_by_instance(self, context, instance_uuid):
+        return db.security_group_get_by_instance(context, instance_uuid)
+
+    def security_group_rule_get_by_security_group(self, context,
+                                                  security_group_id):
+        return db.security_group_rule_get_by_security_group(context,
+                                                            security_group_id)
+
+    def provider_fw_rule_get_all(self, context):
+        return db.provider_fw_rule_get_all(context)
+
+    def agent_build_get_by_triple(self, context, hypervisor, os, architecture):
+        return db.agent_build_get_by_triple(context,
+                                            hypervisor, os, architecture)

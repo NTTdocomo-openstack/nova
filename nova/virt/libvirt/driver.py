@@ -57,7 +57,6 @@ from xml.dom import minidom
 
 from nova.api.metadata import base as instance_metadata
 from nova import block_device
-from nova.compute import instance_types
 from nova.compute import power_state
 from nova.compute import vm_mode
 from nova import config
@@ -268,7 +267,8 @@ class LibvirtDriver(driver.ComputeDriver):
         self._wrapped_conn = None
         self.read_only = read_only
         self.firewall_driver = firewall.load_driver(
-            default=DEFAULT_FIREWALL_DRIVER,
+            DEFAULT_FIREWALL_DRIVER,
+            self.virtapi,
             get_connection=self._get_connection)
         self.vif_driver = importutils.import_object(CONF.libvirt_vif_driver)
         self.volume_drivers = {}
@@ -743,6 +743,13 @@ class LibvirtDriver(driver.ComputeDriver):
 
         if lxc_container_target:
             disk.bind(lxc_host_volume, lxc_container_target, instance_name)
+            s = os.stat(lxc_host_volume)
+            cgroup_info = "b %s:%s rwm\n" % (os.major(s.st_rdev),
+                                             os.minor(s.st_rdev))
+            cgroups_path = ("/sys/fs/cgroup/devices/libvirt/lxc/"
+                            "%s/devices.allow" % instance_name)
+            utils.execute('tee', cgroups_path,
+                          process_input=cgroup_info, run_as_root=True)
 
     @exception.wrap_exception()
     def _detach_lxc_volume(self, xml, virt_dom, instance_name):
@@ -1311,8 +1318,7 @@ class LibvirtDriver(driver.ComputeDriver):
         root_fname = hashlib.sha1(str(disk_images['image_id'])).hexdigest()
         size = instance['root_gb'] * 1024 * 1024 * 1024
 
-        inst_type_id = instance['instance_type_id']
-        inst_type = instance_types.get_instance_type(inst_type_id)
+        inst_type = instance['instance_type']
         if size == 0 or suffix == '.rescue':
             size = None
 
@@ -1678,10 +1684,7 @@ class LibvirtDriver(driver.ComputeDriver):
             'ramdisk_id' if a ramdisk is needed for the rescue image and
             'kernel_id' if a kernel is needed for the rescue image.
         """
-        # FIXME(vish): stick this in db
-        inst_type_id = instance['instance_type_id']
-        inst_type = instance_types.get_instance_type(inst_type_id,
-                                                     inactive=True)
+        inst_type = instance['instance_type']
 
         guest = vconfig.LibvirtConfigGuest()
         guest.virt_type = CONF.libvirt_type
@@ -2351,6 +2354,11 @@ class LibvirtDriver(driver.ComputeDriver):
             None. if given cpu info is not compatible to this server,
             raise exception.
         """
+
+        # NOTE(berendt): virConnectCompareCPU not working for Xen
+        if CONF.libvirt_type == 'xen':
+            return 1
+
         info = jsonutils.loads(cpu_info)
         LOG.info(_('Instance launched has CPU info:\n%s') % cpu_info)
         cpu = vconfig.LibvirtConfigCPU()
@@ -2361,7 +2369,7 @@ class LibvirtDriver(driver.ComputeDriver):
         cpu.cores = info['topology']['cores']
         cpu.threads = info['topology']['threads']
         for f in info['features']:
-            cpu.add_feature(config.LibvirtConfigCPUFeature(f))
+            cpu.add_feature(vconfig.LibvirtConfigCPUFeature(f))
 
         u = "http://libvirt.org/html/libvirt-libvirt.html#virCPUCompareResult"
         m = _("CPU doesn't have compatibility.\n\n%(ret)s\n\nRefer to %(u)s")

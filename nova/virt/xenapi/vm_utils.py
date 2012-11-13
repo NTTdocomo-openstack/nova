@@ -38,7 +38,6 @@ from nova import block_device
 from nova.compute import instance_types
 from nova.compute import power_state
 from nova import config
-from nova import db
 from nova import exception
 from nova import flags
 from nova.image import glance
@@ -181,6 +180,13 @@ class ImageType(object):
         }.get(image_type_id)
 
 
+def _system_metadata_to_dict(system_metadata):
+    result = {}
+    for item in system_metadata:
+        result[item['key']] = item['value']
+    return result
+
+
 def create_vm(session, instance, name_label, kernel, ramdisk,
               use_pv_kernel=False):
     """Create a VM record.  Returns new VM reference.
@@ -270,22 +276,42 @@ def destroy_vm(session, instance, vm_ref):
     LOG.debug(_("VM destroyed"), instance=instance)
 
 
-def shutdown_vm(session, instance, vm_ref, hard=True):
+def clean_shutdown_vm(session, instance, vm_ref):
+    if _is_vm_shutdown(session, vm_ref):
+        LOG.warn(_("VM already halted, skipping shutdown..."),
+                 instance=instance)
+        return False
+
+    LOG.debug(_("Shutting down VM (cleanly)"), instance=instance)
+    try:
+        session.call_xenapi('VM.clean_shutdown', vm_ref)
+    except session.XenAPI.Failure, exc:
+        LOG.exception(exc)
+        return False
+    return True
+
+
+def hard_shutdown_vm(session, instance, vm_ref):
+    if _is_vm_shutdown(session, vm_ref):
+        LOG.warn(_("VM already halted, skipping shutdown..."),
+                 instance=instance)
+        return False
+
+    LOG.debug(_("Shutting down VM (hard)"), instance=instance)
+    try:
+        session.call_xenapi('VM.hard_shutdown', vm_ref)
+    except session.XenAPI.Failure, exc:
+        LOG.exception(exc)
+        return False
+    return True
+
+
+def _is_vm_shutdown(session, vm_ref):
     vm_rec = session.call_xenapi("VM.get_record", vm_ref)
     state = compile_info(vm_rec)['state']
     if state == power_state.SHUTDOWN:
-        LOG.warn(_("VM already halted, skipping shutdown..."),
-                 instance=instance)
-        return
-
-    LOG.debug(_("Shutting down VM"), instance=instance)
-    try:
-        if hard:
-            session.call_xenapi('VM.hard_shutdown', vm_ref)
-        else:
-            session.call_xenapi('VM.clean_shutdown', vm_ref)
-    except session.XenAPI.Failure, exc:
-        LOG.exception(exc)
+        return True
+    return False
 
 
 def ensure_free_mem(session, instance):
@@ -922,9 +948,7 @@ def _create_image(context, session, instance, name_label, image_id,
     elif cache_images == 'all':
         cache = True
     elif cache_images == 'some':
-        # FIXME(sirp): This should be eager loaded like instance metadata
-        sys_meta = db.instance_system_metadata_get(context,
-                instance['uuid'])
+        sys_meta = _system_metadata_to_dict(instance['system_metadata'])
         try:
             cache = utils.bool_from_str(sys_meta['image_cache_in_nova'])
         except KeyError:
@@ -1017,9 +1041,7 @@ def _image_uses_bittorrent(context, instance):
     if xenapi_torrent_images == 'all':
         bittorrent = True
     elif xenapi_torrent_images == 'some':
-        # FIXME(sirp): This should be eager loaded like instance metadata
-        sys_meta = db.instance_system_metadata_get(context,
-                instance['uuid'])
+        sys_meta = _system_metadata_to_dict(instance['system_metadata'])
         try:
             bittorrent = utils.bool_from_str(sys_meta['image_bittorrent'])
         except KeyError:
