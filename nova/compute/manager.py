@@ -40,6 +40,7 @@ import socket
 import sys
 import time
 import traceback
+import uuid
 
 from eventlet import greenthread
 
@@ -1836,9 +1837,9 @@ class ComputeManager(manager.SchedulerDependentManager):
                                      migration['id'],
                                      {'status': 'migrating'})
 
-            self._instance_update(context, instance['uuid'],
-                                  task_state=task_states.RESIZE_MIGRATING,
-                                  expected_task_state=task_states.RESIZE_PREP)
+            instance = self._instance_update(context, instance['uuid'],
+                    task_state=task_states.RESIZE_MIGRATING,
+                    expected_task_state=task_states.RESIZE_PREP)
 
             self._notify_about_instance_usage(
                 context, instance, "resize.start", network_info=network_info)
@@ -1860,11 +1861,11 @@ class ComputeManager(manager.SchedulerDependentManager):
                                                  migration['id'],
                                                  {'status': 'post-migrating'})
 
-            self._instance_update(context, instance['uuid'],
-                                  host=migration['dest_compute'],
-                                  task_state=task_states.RESIZE_MIGRATED,
-                                  expected_task_state=task_states.
-                                      RESIZE_MIGRATING)
+            instance = self._instance_update(context, instance['uuid'],
+                    host=migration['dest_compute'],
+                    task_state=task_states.RESIZE_MIGRATED,
+                    expected_task_state=task_states.
+                    RESIZE_MIGRATING)
 
             self.compute_rpcapi.finish_resize(context, instance,
                     migration, image, disk_info,
@@ -1909,7 +1910,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         network_info = self._get_instance_nw_info(context, instance)
 
-        self._instance_update(context, instance['uuid'],
+        instance = self._instance_update(context, instance['uuid'],
                               task_state=task_states.RESIZE_FINISH,
                               expected_task_state=task_states.RESIZE_MIGRATED)
 
@@ -2180,7 +2181,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         """Return connection information for a vnc console."""
         context = context.elevated()
         LOG.debug(_("Getting vnc console"), instance=instance)
-        token = str(utils.gen_uuid())
+        token = str(uuid.uuid4())
 
         if console_type == 'novnc':
             # For essex, novncproxy_base_url must include the full path

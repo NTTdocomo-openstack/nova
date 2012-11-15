@@ -20,6 +20,7 @@
 """Unit tests for the DB API"""
 
 import datetime
+import uuid as uuidutils
 
 from nova import config
 from nova import context
@@ -29,7 +30,7 @@ from nova import flags
 from nova.openstack.common import timeutils
 from nova import test
 from nova.tests import matchers
-from nova import utils
+
 
 CONF = config.CONF
 CONF.import_opt('reserved_host_memory_mb', 'nova.compute.resource_tracker')
@@ -145,7 +146,7 @@ class DbApiTestCase(test.TestCase):
         self.assertRaises(exception.MarkerNotFound,
                           db.instance_get_all_by_filters,
                           self.context, {'display_name': '%test%'},
-                          marker=str(utils.gen_uuid()))
+                          marker=str(uuidutils.uuid4()))
 
     def test_migration_get_unconfirmed_by_dest_compute(self):
         ctxt = context.get_admin_context()
@@ -271,6 +272,26 @@ class DbApiTestCase(test.TestCase):
         system_meta = db.instance_system_metadata_get(ctxt, instance.uuid)
         self.assertEqual('baz', system_meta['original_image_ref'])
 
+    def test_instance_update_of_instance_type_id(self):
+        ctxt = context.get_admin_context()
+
+        inst_type1 = db.instance_type_get_by_name(ctxt, 'm1.tiny')
+        inst_type2 = db.instance_type_get_by_name(ctxt, 'm1.small')
+
+        values = {'instance_type_id': inst_type1['id']}
+        instance = db.instance_create(ctxt, values)
+
+        self.assertEqual(instance['instance_type']['id'], inst_type1['id'])
+        self.assertEqual(instance['instance_type']['name'],
+                inst_type1['name'])
+
+        values = {'instance_type_id': inst_type2['id']}
+        instance = db.instance_update(ctxt, instance['uuid'], values)
+
+        self.assertEqual(instance['instance_type']['id'], inst_type2['id'])
+        self.assertEqual(instance['instance_type']['name'],
+                inst_type2['name'])
+
     def test_instance_update_with_and_get_original(self):
         ctxt = context.get_admin_context()
 
@@ -286,7 +307,7 @@ class DbApiTestCase(test.TestCase):
     def test_instance_fault_create(self):
         """Ensure we can create an instance fault"""
         ctxt = context.get_admin_context()
-        uuid = str(utils.gen_uuid())
+        uuid = str(uuidutils.uuid4())
 
         # Create a fault
         fault_values = {
@@ -1011,6 +1032,55 @@ class CapacityTestCase(test.TestCase):
         self.assertEqual(num_instance_stat['id'], stat['id'])
         self.assertEqual(num_instance_stat['key'], stat['key'])
         self.assertEqual(1, int(stat['value']))
+
+
+class MigrationTestCase(test.TestCase):
+
+    def setUp(self):
+        super(MigrationTestCase, self).setUp()
+        self.ctxt = context.get_admin_context()
+
+        self._create()
+        self._create()
+        self._create(status='reverted')
+        self._create(status='confirmed')
+        self._create(source_compute='host2', dest_compute='host1')
+        self._create(source_compute='host2', dest_compute='host3')
+        self._create(source_compute='host3', dest_compute='host4')
+
+    def _create(self, status='migrating', source_compute='host1',
+                dest_compute='host2'):
+
+        values = {'host': source_compute}
+        instance = db.instance_create(self.ctxt, values)
+
+        values = {'status': status, 'source_compute': source_compute,
+                  'dest_compute': dest_compute,
+                  'instance_uuid': instance['uuid']}
+        db.migration_create(self.ctxt, values)
+
+    def _assert_in_progress(self, migrations):
+        for migration in migrations:
+            self.assertNotEqual('confirmed', migration.status)
+            self.assertNotEqual('reverted', migration.status)
+
+    def test_in_progress_host1(self):
+        migrations = db.migration_get_in_progress_by_host(self.ctxt, 'host1')
+        # 2 as source + 1 as dest
+        self.assertEqual(3, len(migrations))
+        self._assert_in_progress(migrations)
+
+    def test_in_progress_host2(self):
+        migrations = db.migration_get_in_progress_by_host(self.ctxt, 'host2')
+        # 2 as dest, 2 as source
+        self.assertEqual(4, len(migrations))
+        self._assert_in_progress(migrations)
+
+    def test_instance_join(self):
+        migrations = db.migration_get_in_progress_by_host(self.ctxt, 'host2')
+        for migration in migrations:
+            instance = migration['instance']
+            self.assertEqual(migration['instance_uuid'], instance['uuid'])
 
 
 class TestIpAllocation(test.TestCase):
