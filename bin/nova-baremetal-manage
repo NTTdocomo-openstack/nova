@@ -160,7 +160,7 @@ class BareMetalNodeCommands(object):
         }
         ctx = context.get_admin_context()
         r = bmdb.bm_node_create(ctx, values)
-        print r.id
+        print r['id']
 
     @args('--id', dest='node_id', metavar='<id>',
             help='ID of bare-metal node')
@@ -284,7 +284,7 @@ class BareMetalPxeIpCommands(object):
         if ip_id is None and cidr_str is None:
             raise Exception("Please specify either ID or CIDR")
         ctx = context.get_admin_context()
-        if ip_is is None:
+        if ip_id is not None:
             bmdb.bm_pxe_ip_destroy(ctx, ip_id)
         else:
             cidr = netaddr.IPNetwork(cidr_str)
