@@ -20,12 +20,9 @@ Tests for baremetal tilera driver.
 import mox
 
 from nova import exception
-from nova import flags
 from nova import test
 
 from nova.virt.baremetal import tilera
-
-FLAGS = flags.FLAGS
 
 
 class BaremetalTILERATestCase(test.TestCase):

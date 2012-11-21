@@ -24,7 +24,6 @@ import shutil
 
 from nova.compute import instance_types
 from nova import exception
-from nova import flags
 from nova.network import linux_net
 from nova.openstack.common import cfg
 from nova.openstack.common import fileutils
@@ -68,8 +67,8 @@ pxe_opts = [
                help='additional append parameters for baremetal pxe'),
             ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(pxe_opts)
+CONF = cfg.CONF
+CONF.register_opts(pxe_opts)
 
 
 def get_baremetal_nodes():
@@ -89,13 +88,13 @@ def _late_load_cheetah():
 
 def _dnsmasq_pid_path(pxe_interface):
     name = 'dnsmasq-%s.pid' % pxe_interface
-    path = os.path.join(FLAGS.baremetal_dnsmasq_pid_dir, name)
+    path = os.path.join(CONF.baremetal_dnsmasq_pid_dir, name)
     return path
 
 
 def _dnsmasq_lease_path(pxe_interface):
     name = 'dnsmasq-%s.lease' % pxe_interface
-    path = os.path.join(FLAGS.baremetal_dnsmasq_lease_dir, name)
+    path = os.path.join(CONF.baremetal_dnsmasq_lease_dir, name)
     return path
 
 
@@ -146,8 +145,8 @@ def _build_pxe_config(deployment_id, deployment_key, deployment_iscsi_iqn,
     pxeconf += " iscsi_target_iqn=%s" % deployment_iscsi_iqn
     pxeconf += " deployment_id=%s" % deployment_id
     pxeconf += " deployment_key=%s" % deployment_key
-    if FLAGS.baremetal_pxe_append_params:
-        pxeconf += " %s" % FLAGS.baremetal_pxe_append_params
+    if CONF.baremetal_pxe_append_params:
+        pxeconf += " %s" % CONF.baremetal_pxe_append_params
     pxeconf += "\n"
     pxeconf += "ipappend 3\n"
     pxeconf += "\n"
@@ -160,8 +159,8 @@ def _build_pxe_config(deployment_id, deployment_key, deployment_iscsi_iqn,
     pxeconf += " root=${ROOT} ro"
     if iscsi_portal:
         pxeconf += ' bm_iscsi_portal=%s' % iscsi_portal
-    if FLAGS.baremetal_pxe_append_params:
-        pxeconf += " %s" % FLAGS.baremetal_pxe_append_params
+    if CONF.baremetal_pxe_append_params:
+        pxeconf += " %s" % CONF.baremetal_pxe_append_params
     pxeconf += "\n"
     pxeconf += "\n"
     return pxeconf
@@ -169,7 +168,7 @@ def _build_pxe_config(deployment_id, deployment_key, deployment_iscsi_iqn,
 
 def _start_per_host_pxe_server(tftp_root, vlan_id,
                                server_address, client_address):
-    parent_interface = FLAGS.baremetal_pxe_parent_interface
+    parent_interface = CONF.baremetal_pxe_parent_interface
 
     pxe_interface = vlan.ensure_vlan(vlan_id, parent_interface)
 
@@ -191,7 +190,7 @@ def _start_per_host_pxe_server(tftp_root, vlan_id,
                   client_address, 'scope', 'host', 'dev', pxe_interface,
                   run_as_root=True)
 
-    shutil.copyfile(FLAGS.baremetal_pxelinux_path,
+    shutil.copyfile(CONF.baremetal_pxelinux_path,
                     os.path.join(tftp_root, 'pxelinux.0'))
     fileutils.ensure_tree(os.path.join(tftp_root, 'pxelinux.cfg'))
 
@@ -211,7 +210,7 @@ def _stop_per_host_pxe_server(tftp_root, vlan_id):
     bm_utils.unlink_without_raise(_dnsmasq_pid_path(pxe_interface))
     bm_utils.unlink_without_raise(_dnsmasq_lease_path(pxe_interface))
 
-    vlan.ensure_no_vlan(vlan_id, FLAGS.baremetal_pxe_parent_interface)
+    vlan.ensure_no_vlan(vlan_id, CONF.baremetal_pxe_parent_interface)
 
     shutil.rmtree(os.path.join(tftp_root, 'pxelinux.cfg'), ignore_errors=True)
 
@@ -225,13 +224,13 @@ class PXE(object):
 
     def define_vars(self, instance, network_info, block_device_info):
         var = {}
-        var['image_root'] = os.path.join(FLAGS.instances_path,
+        var['image_root'] = os.path.join(CONF.instances_path,
                                          instance['name'])
-        if FLAGS.baremetal_pxe_vlan_per_host:
-            var['tftp_root'] = os.path.join(FLAGS.baremetal_tftp_root,
+        if CONF.baremetal_pxe_vlan_per_host:
+            var['tftp_root'] = os.path.join(CONF.baremetal_tftp_root,
                                             str(instance['uuid']))
         else:
-            var['tftp_root'] = FLAGS.baremetal_tftp_root
+            var['tftp_root'] = CONF.baremetal_tftp_root
         var['network_info'] = network_info
         var['block_device_info'] = block_device_info
         return var
@@ -261,12 +260,12 @@ class PXE(object):
             address_v6 = None
             gateway_v6 = None
             netmask_v6 = None
-            if FLAGS.use_ipv6:
+            if CONF.use_ipv6:
                 address_v6 = mapping['ip6s'][0]['ip']
                 netmask_v6 = mapping['ip6s'][0]['netmask']
                 gateway_v6 = mapping['gateway_v6']
             name = 'eth%d' % ifc_num
-            if (FLAGS.baremetal_use_unsafe_vlan
+            if (CONF.baremetal_use_unsafe_vlan
                     and mapping['should_create_vlan']
                     and network_ref.get('vlan')):
                 name = 'eth%d.%d' % (ifc_num, network_ref.get('vlan'))
@@ -283,11 +282,11 @@ class PXE(object):
                         }
             nets.append(net_info)
 
-        ifc_template = open(FLAGS.baremetal_injected_network_template).read()
+        ifc_template = open(CONF.baremetal_injected_network_template).read()
         _late_load_cheetah()
         net = str(Template(ifc_template,
                            searchList=[{'interfaces': nets,
-                                        'use_ipv6': FLAGS.use_ipv6,
+                                        'use_ipv6': CONF.use_ipv6,
                                         }]))
         net += '\n'
         net += 'auto %s\n' % bootif_name
@@ -323,7 +322,7 @@ class PXE(object):
         else:
             key = None
 
-        if not FLAGS.baremetal_inject_password:
+        if not CONF.baremetal_inject_password:
             admin_password = None
 
         metadata = inst.get('metadata')
@@ -383,11 +382,11 @@ class PXE(object):
 
     def _get_deploy_aki_id(self, image_meta):
         props = image_meta.get('properties', {})
-        return props.get('deploy_kernel_id', FLAGS.baremetal_deploy_kernel)
+        return props.get('deploy_kernel_id', CONF.baremetal_deploy_kernel)
 
     def _get_deploy_ari_id(self, image_meta):
         props = image_meta.get('properties', {})
-        return props.get('deploy_ramdisk_id', FLAGS.baremetal_deploy_ramdisk)
+        return props.get('deploy_ramdisk_id', CONF.baremetal_deploy_ramdisk)
 
     def _put_tftp_images(self, context, instance, image_meta, tftp_root):
         def _cache_image(image_id, target):
@@ -421,12 +420,12 @@ class PXE(object):
 
         LOG.debug(_("Activating bootloader with images: %s") % images)
         fileutils.ensure_tree(tftp_root)
-        if not FLAGS.baremetal_pxe_vlan_per_host:
+        if not CONF.baremetal_pxe_vlan_per_host:
             fileutils.ensure_tree(os.path.join(tftp_root, instance['uuid']))
 
         tftp_paths = []
         for image_id, tftp_path in images:
-            if not FLAGS.baremetal_pxe_vlan_per_host:
+            if not CONF.baremetal_pxe_vlan_per_host:
                 tftp_path = os.path.join(instance['uuid'], tftp_path)
             target = os.path.join(tftp_root, tftp_path)
             _cache_image(image_id, target)
@@ -469,13 +468,13 @@ class PXE(object):
                                              pxe_config_path)
 
         pxe_ip = None
-        if FLAGS.baremetal_pxe_vlan_per_host:
+        if CONF.baremetal_pxe_vlan_per_host:
             pxe_ip_id = bmdb.bm_pxe_ip_associate(context, node['id'])
             pxe_ip = bmdb.bm_pxe_ip_get(context, pxe_ip_id)
 
         deployment_iscsi_iqn = "iqn-%s" % instance['uuid']
         iscsi_portal = None
-        if FLAGS.baremetal_pxe_append_iscsi_portal:
+        if CONF.baremetal_pxe_append_iscsi_portal:
             if pxe_ip:
                 iscsi_portal = pxe_ip['server_address']
         pxeconf = _build_pxe_config(deployment['id'],
@@ -489,7 +488,7 @@ class PXE(object):
         fileutils.ensure_tree(pxe_config_dir)
         libvirt_utils.write_to_file(pxe_config_path, pxeconf)
 
-        if FLAGS.baremetal_pxe_vlan_per_host:
+        if CONF.baremetal_pxe_vlan_per_host:
             _start_per_host_pxe_server(tftp_root,
                                        node['prov_vlan_id'],
                                        pxe_ip['server_address'],
@@ -498,7 +497,7 @@ class PXE(object):
     def deactivate_bootloader(self, var, context, node, instance):
         tftp_root = var['tftp_root']
 
-        if FLAGS.baremetal_pxe_vlan_per_host:
+        if CONF.baremetal_pxe_vlan_per_host:
             _stop_per_host_pxe_server(tftp_root, node['prov_vlan_id'])
             bmdb.bm_pxe_ip_disassociate(context, node['id'])
             tftp_image_dir = tftp_root

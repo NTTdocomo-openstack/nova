@@ -15,7 +15,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from nova import flags
+from nova.openstack.common import cfg
 from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
 from nova import utils
@@ -24,12 +24,12 @@ from nova import utils
 LOG = logging.getLogger(__name__)
 
 
-FLAGS = flags.FLAGS
+CONF = cfg.CONF
 
 
 def _execute(*cmd, **kwargs):
     """Wrapper around utils._execute for fake_network."""
-    if FLAGS.fake_network:
+    if CONF.fake_network:
         LOG.debug('FAKE NET: %s', ' '.join(map(str, cmd)))
         return 'fake', 0
     else:

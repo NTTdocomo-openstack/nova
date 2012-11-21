@@ -25,7 +25,6 @@ import stat
 import tempfile
 import time
 
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova import utils
@@ -52,8 +51,8 @@ opts = [
                     'after IPMI power operations'),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(opts)
+CONF = cfg.CONF
+CONF.register_opts(opts)
 
 LOG = logging.getLogger(__name__)
 
@@ -68,7 +67,7 @@ def _make_password_file(password):
 
 def _console_pidfile(node_id):
     name = "%s.pid" % node_id
-    path = os.path.join(FLAGS.baremetal_term_pid_dir, name)
+    path = os.path.join(CONF.baremetal_term_pid_dir, name)
     return path
 
 
@@ -144,13 +143,13 @@ class Ipmi(object):
         count = 0
         while not self._is_power(state):
             count += 1
-            if count > FLAGS.baremetal_ipmi_power_retry:
+            if count > CONF.baremetal_ipmi_power_retry:
                 return baremetal_states.ERROR
             try:
                 self._exec_ipmitool("power %s" % state)
             except Exception:
                 LOG.exception("_power(%s) failed" % state)
-            time.sleep(FLAGS.baremetal_ipmi_power_wait)
+            time.sleep(CONF.baremetal_ipmi_power_wait)
         if state == "on":
             return baremetal_states.ACTIVE
         else:
@@ -181,10 +180,10 @@ class Ipmi(object):
         if not self._terminal_port:
             return
         args = []
-        args.append(FLAGS.baremetal_term)
-        if FLAGS.baremetal_term_cert_dir:
+        args.append(CONF.baremetal_term)
+        if CONF.baremetal_term_cert_dir:
             args.append("-c")
-            args.append(FLAGS.baremetal_term_cert_dir)
+            args.append(CONF.baremetal_term_cert_dir)
         else:
             args.append("-t")
         args.append("-p")

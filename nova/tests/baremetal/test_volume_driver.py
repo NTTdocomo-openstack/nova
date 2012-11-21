@@ -14,18 +14,15 @@
 #    under the License.
 
 """
-Tests for baremetal volume driver.
+Tests for bare-metal volume driver.
 """
 
 import mox
 
-from nova import flags
 from nova import test
 from nova import utils
 
 from nova.virt.baremetal import volume_driver
-
-FLAGS = flags.FLAGS
 
 SHOW_OUTPUT = """Target 1: iqn.2010-10.org.openstack:volume-00000001
     System information:
@@ -128,7 +125,7 @@ iqn.2010-10.org.openstack:volume-00000001-lun-1
 """
 
 
-class BaremetalVolumeTestCase(test.TestCase):
+class BareMetalVolumeTestCase(test.TestCase):
 
     def test_list_backingstore_path(self):
         self.stubs.Set(utils, 'execute', lambda *args,
@@ -137,5 +134,5 @@ class BaremetalVolumeTestCase(test.TestCase):
         self.assertEqual(len(l), 3)
         self.assertIn('/dev/nova-volumes/volume-00000001', l)
         self.assertIn('/dev/nova-volumes/volume-00000002', l)
-        self.assertIn('/dev/disk/by-path/ip-172.17.12.10:3260-iscsi-\
-iqn.2010-10.org.openstack:volume-00000001-lun-1', l)
+        self.assertIn('/dev/disk/by-path/ip-172.17.12.10:3260-iscsi-'
+                      'iqn.2010-10.org.openstack:volume-00000001-lun-1', l)

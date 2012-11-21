@@ -22,7 +22,6 @@ A driver for Bare-metal platform.
 """
 
 from nova.compute import power_state
-from nova import config
 from nova import context as nova_context
 from nova import exception
 from nova.openstack.common import cfg
@@ -67,7 +66,7 @@ opts = [
 
 LOG = logging.getLogger(__name__)
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(opts)
 
 DEFAULT_FIREWALL_DRIVER = "%s.%s" % (
@@ -103,6 +102,7 @@ def _get_baremetal_node_by_instance_uuid(instance_uuid):
     node = bmdb.bm_node_get_by_instance_uuid(ctx, instance_uuid)
     if not node:
         return None
+    # NOTE(deva): should we raise an exception here?
     if node['service_host'] != CONF.host:
         return None
     return node
@@ -172,6 +172,7 @@ class BareMetalDriver(driver.ComputeDriver):
         return 'baremetal'
 
     def get_hypervisor_version(self):
+        # TODO(deva): define the version properly elsewhere
         return 1
 
     def list_instances(self):
@@ -187,16 +188,20 @@ class BareMetalDriver(driver.ComputeDriver):
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
+        # TODO(deva): clean up nodename / node_id handling here
         nodename = instance.get('node')
         if nodename is None:
+            # TODO(deva): move exception generation into db layer
             raise NodeNotSpecified()
         node_id = int(nodename)
         node = bmdb.bm_node_get(context, node_id)
         if not node:
+            # TODO(deva): move exception generation into db layer
             raise NodeNotFound(nodename=int(nodename))
         if node['instance_uuid']:
             raise NodeInUse(nodename=nodename, instance_uuid=instance['uuid'])
 
+        # TODO(deva): split this huge try: block into manageable parts
         try:
             _update_baremetal_state(context, node, instance,
                                     baremetal_states.BUILDING)
@@ -234,6 +239,7 @@ class BareMetalDriver(driver.ComputeDriver):
 
             pm.start_console()
         except Exception:
+            # TODO(deva): add tooling that can revert a failed spawn
             _update_baremetal_state(context, node, instance,
                                     baremetal_states.ERROR)
             raise
@@ -242,6 +248,7 @@ class BareMetalDriver(driver.ComputeDriver):
                block_device_info=None):
         node = _get_baremetal_node_by_instance_uuid(instance['uuid'])
 
+        # TODO(deva): move exception generation into db layer
         if not node:
             raise exception.InstanceNotFound(instance_id=instance['uuid'])
 
@@ -251,6 +258,8 @@ class BareMetalDriver(driver.ComputeDriver):
         _update_baremetal_state(ctx, node, instance, state)
 
     def destroy(self, instance, network_info, block_device_info=None):
+        # TODO(deva): refactor so that dangling block_devices and bootloaders
+        #             can be cleaned up even after a failed boot or delete
         ctx = nova_context.get_admin_context()
 
         node = _get_baremetal_node_by_instance_uuid(instance['uuid'])
@@ -294,6 +303,7 @@ class BareMetalDriver(driver.ComputeDriver):
     def power_off(self, instance):
         """Power off the specified instance."""
         node = _get_baremetal_node_by_instance_uuid(instance['uuid'])
+        # TODO(deva): move exception generation into db layer
         if not node:
             raise exception.InstanceNotFound(instance_id=instance['uuid'])
         pm = get_power_manager(node)
@@ -302,6 +312,7 @@ class BareMetalDriver(driver.ComputeDriver):
     def power_on(self, instance):
         """Power on the specified instance"""
         node = _get_baremetal_node_by_instance_uuid(instance['uuid'])
+        # TODO(deva): move exception generation into db layer
         if not node:
             raise exception.InstanceNotFound(instance_id=instance['uuid'])
         pm = get_power_manager(node)
@@ -322,6 +333,7 @@ class BareMetalDriver(driver.ComputeDriver):
     def get_info(self, instance):
         inst_uuid = instance.get('uuid')
         node = _get_baremetal_node_by_instance_uuid(inst_uuid)
+        # TODO(deva): move exception generation into db layer
         if not node:
             raise exception.InstanceNotFound(instance_id=inst_uuid)
         pm = get_power_manager(node)
@@ -378,6 +390,7 @@ class BareMetalDriver(driver.ComputeDriver):
         context = nova_context.get_admin_context()
         node_id = int(nodename)
         node = bmdb.bm_node_get(context, node_id)
+        # TODO(deva): move exception generation into db layer
         if not node:
             raise NodeNotFound(nodename=nodename)
         dic = self._node_resource(node)

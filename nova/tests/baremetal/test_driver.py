@@ -21,7 +21,6 @@ Tests for baremetal driver.
 import mox
 
 from nova.db.sqlalchemy import models as nova_models
-from nova import flags
 from nova import test
 from nova.tests.baremetal.db import base
 from nova.tests.baremetal.db import utils
@@ -33,9 +32,6 @@ from nova.virt.baremetal import db
 from nova.virt.baremetal import driver as bm_driver
 from nova.virt.baremetal import volume_driver
 from nova.virt.firewall import NoopFirewallDriver
-
-
-FLAGS = flags.FLAGS
 
 
 class FakeVifDriver(object):

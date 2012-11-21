@@ -19,13 +19,10 @@ Tests for baremetal tilera_pdu driver.
 
 import mox
 
-from nova import flags
 from nova import test
 
 from nova.tests.baremetal.db import utils
 from nova.virt.baremetal import tilera_pdu
-
-FLAGS = flags.FLAGS
 
 
 class BaremetalPduTestCase(test.TestCase):

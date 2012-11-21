@@ -18,7 +18,6 @@
 
 import re
 
-from nova import config
 from nova import context as nova_context
 from nova import exception
 from nova.openstack.common import cfg
@@ -39,7 +38,7 @@ opts = [
                help='iSCSI IQN prefix used in baremetal volume connections.'),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(opts)
 
 CONF.import_opt('libvirt_volume_drivers', 'nova.virt.libvirt.driver')
@@ -49,6 +48,8 @@ LOG = logging.getLogger(__name__)
 
 def _get_baremetal_node_by_instance_name(virtapi, instance_name):
     context = nova_context.get_admin_context()
+    # TODO(deva): optimize this DB query.
+    #             I don't think it should be _get_all
     for node in bmdb.bm_node_get_all(context, service_host=CONF.host):
         if not node['instance_uuid']:
             continue
@@ -221,6 +222,7 @@ class LibvirtVolumeDriver(VolumeDriver):
         return method(connection_info, *args, **kwargs)
 
     def attach_volume(self, connection_info, instance_name, mountpoint):
+        # TODO(deva): move exception generation into db layer
         node = _get_baremetal_node_by_instance_name(self.virtapi,
                                                     instance_name)
         if not node:

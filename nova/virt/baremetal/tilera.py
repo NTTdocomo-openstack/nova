@@ -25,7 +25,6 @@ import shutil
 import subprocess
 import time
 
-from nova import config
 from nova import exception
 from nova.openstack.common import cfg
 from nova.openstack.common import fileutils
@@ -34,7 +33,7 @@ from nova import utils
 from nova.virt.baremetal import utils as bm_utils
 from nova.virt.disk import api as disk
 
-CONF = config.CONF
+CONF = cfg.CONF
 
 LOG = logging.getLogger(__name__)
 
