@@ -151,7 +151,7 @@ def stub_out_instance_quota(stubs, allowed, quota, resource='instances'):
 def stub_out_networking(stubs):
     def get_my_ip():
         return '127.0.0.1'
-    stubs.Set(nova.flags, '_get_my_ip', get_my_ip)
+    stubs.Set(nova.config, '_get_my_ip', get_my_ip)
 
 
 def stub_out_compute_api_snapshot(stubs):
@@ -473,7 +473,7 @@ def stub_instance(id, user_id=None, project_id=None, host=None,
         "vcpus": 0,
         "root_gb": 0,
         "ephemeral_gb": 0,
-        "hostname": "",
+        "hostname": display_name or server_name,
         "host": host,
         "instance_type_id": 1,
         "instance_type": dict(inst_type),

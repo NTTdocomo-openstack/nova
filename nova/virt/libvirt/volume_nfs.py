@@ -20,9 +20,7 @@
 import ctypes
 import os
 
-from nova import config
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova import utils
@@ -35,8 +33,9 @@ volume_opts = [
                default='$state_path/mnt',
                help='Base dir where nfs expected to be mounted on compute'),
 ]
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(volume_opts)
+CONF.import_opt('state_path', 'nova.config')
 
 
 class NfsVolumeDriver(volume.LibvirtVolumeDriver):

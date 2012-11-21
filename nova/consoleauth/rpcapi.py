@@ -18,11 +18,10 @@
 Client side of the consoleauth RPC API.
 """
 
-from nova import config
-from nova import flags
+from nova.openstack.common import cfg
 import nova.openstack.common.rpc.proxy
 
-CONF = config.CONF
+CONF = cfg.CONF
 
 
 class ConsoleAuthAPI(nova.openstack.common.rpc.proxy.RpcProxy):

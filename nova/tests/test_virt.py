@@ -18,7 +18,6 @@
 import os
 
 from nova import exception
-from nova import flags
 from nova import test
 from nova import tests
 from nova import utils

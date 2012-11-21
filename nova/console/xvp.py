@@ -22,11 +22,9 @@ import signal
 
 from Cheetah import Template
 
-from nova import config
 from nova import context
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova import utils
@@ -50,8 +48,10 @@ xvp_opts = [
                help='port for XVP to multiplex VNC connections on'),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(xvp_opts)
+CONF.import_opt('host', 'nova.config')
+CONF.import_opt('pybasedir', 'nova.config')
 LOG = logging.getLogger(__name__)
 
 

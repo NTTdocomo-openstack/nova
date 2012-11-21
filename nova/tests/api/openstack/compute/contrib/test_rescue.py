@@ -15,14 +15,14 @@
 import webob
 
 from nova import compute
-from nova import config
 from nova import exception
-from nova import flags
+from nova.openstack.common import cfg
 from nova.openstack.common import jsonutils
 from nova import test
 from nova.tests.api.openstack import fakes
 
-CONF = config.CONF
+CONF = cfg.CONF
+CONF.import_opt('password_length', 'nova.config')
 
 
 def rescue(self, context, instance, rescue_password=None):

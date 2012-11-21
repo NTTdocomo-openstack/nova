@@ -37,13 +37,12 @@ from nova.compute import rpcapi as compute_rpcapi
 from nova.compute import task_states
 from nova.compute import utils as compute_utils
 from nova.compute import vm_states
-from nova import config
 from nova import context
 from nova import db
 from nova import exception
-from nova import flags
 from nova.network import api as network_api
 from nova.network import model as network_model
+from nova.openstack.common import cfg
 from nova.openstack.common import importutils
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
@@ -69,7 +68,10 @@ from nova.volume import cinder
 
 QUOTAS = quota.QUOTAS
 LOG = logging.getLogger(__name__)
-CONF = config.CONF
+CONF = cfg.CONF
+CONF.import_opt('compute_manager', 'nova.config')
+CONF.import_opt('compute_topic', 'nova.config')
+CONF.import_opt('host', 'nova.config')
 CONF.import_opt('live_migration_retry_count', 'nova.compute.manager')
 
 
@@ -888,7 +890,8 @@ class ComputeTestCase(BaseTestCase):
                                       image_ref, image_ref,
                                       injected_files=[],
                                       new_pass="new_password",
-                                      orig_sys_metadata=sys_metadata)
+                                      orig_sys_metadata=sys_metadata,
+                                      bdms=[])
         self.compute.terminate_instance(self.context, instance=instance)
 
     def test_rebuild_launch_time(self):
@@ -907,8 +910,9 @@ class ComputeTestCase(BaseTestCase):
         self.compute.rebuild_instance(self.context, instance,
                                       image_ref, image_ref,
                                       injected_files=[],
-                                      new_pass="new_password")
-        instance = db.instance_get_by_uuid(self.context, instance_uuid)
+                                      new_pass="new_password",
+                                      bdms=[])
+        instance = db.instance_get_by_uuid(self.context, instance_uuid,)
         self.assertEquals(cur_time, instance['launched_at'])
         self.compute.terminate_instance(self.context,
                 instance=jsonutils.to_primitive(instance))
@@ -1481,7 +1485,7 @@ class ComputeTestCase(BaseTestCase):
 
         self.mox.StubOutWithMock(self.compute, "_setup_block_device_mapping")
         self.compute._setup_block_device_mapping(
-                mox.IgnoreArg(),
+                mox.IgnoreArg(), mox.IgnoreArg(),
                 mox.IgnoreArg()).AndRaise(rpc.common.RemoteError('', '', ''))
 
         self.mox.ReplayAll()
@@ -1718,7 +1722,8 @@ class ComputeTestCase(BaseTestCase):
                                       image_ref, new_image_ref,
                                       injected_files=[],
                                       new_pass=password,
-                                      orig_sys_metadata=orig_sys_metadata)
+                                      orig_sys_metadata=orig_sys_metadata,
+                                      bdms=[])
 
         instance = db.instance_get_by_uuid(self.context, inst_ref['uuid'])
 
@@ -2322,11 +2327,12 @@ class ComputeTestCase(BaseTestCase):
     def test_post_live_migration_working_correctly(self):
         """Confirm post_live_migration() works as expected correctly."""
         dest = 'desthost'
-        flo_addr = '1.2.1.2'
+        srchost = self.compute.host
 
         # creating testdata
         c = context.get_admin_context()
         inst_ref = jsonutils.to_primitive(self._create_fake_instance({
+                                'host': srchost,
                                 'state_description': 'migrating',
                                 'state': power_state.PAUSED}))
         inst_uuid = inst_ref['uuid']
@@ -2335,15 +2341,15 @@ class ComputeTestCase(BaseTestCase):
         db.instance_update(c, inst_uuid,
                            {'task_state': task_states.MIGRATING,
                             'power_state': power_state.PAUSED})
-        fix_addr = db.fixed_ip_create(c, {'address': '1.1.1.1',
-                                          'instance_uuid': inst_ref['uuid']})
-        fix_ref = db.fixed_ip_get_by_address(c, fix_addr)
-        db.floating_ip_create(c, {'address': flo_addr,
-                                  'fixed_ip_id': fix_ref['id']})
 
         # creating mocks
         self.mox.StubOutWithMock(self.compute.driver, 'unfilter_instance')
         self.compute.driver.unfilter_instance(inst_ref, [])
+        self.mox.StubOutWithMock(self.compute.network_api,
+                                 'migrate_instance_start')
+        migration = {'source_compute': srchost,
+                     'dest_compute': dest, }
+        self.compute.network_api.migrate_instance_start(c, inst_ref, migration)
         self.mox.StubOutWithMock(rpc, 'call')
         rpc.call(c, rpc.queue_get_for(c, CONF.compute_topic, dest),
             {"method": "post_live_migration_at_destination",
@@ -2362,14 +2368,39 @@ class ComputeTestCase(BaseTestCase):
         self.mox.ReplayAll()
         self.compute._post_live_migration(c, inst_ref, dest)
 
-        # make sure floating ips are rewritten to destinatioin hostname.
-        flo_refs = db.floating_ip_get_all_by_host(c, dest)
-        self.assertTrue(flo_refs)
-        self.assertEqual(flo_refs[0]['address'], flo_addr)
+    def test_post_live_migration_at_destination(self):
+        params = {'task_state': task_states.MIGRATING,
+                  'power_state': power_state.PAUSED, }
+        instance = jsonutils.to_primitive(self._create_fake_instance(params))
 
-        # cleanup
-        db.instance_destroy(c, inst_uuid)
-        db.floating_ip_destroy(c, flo_addr)
+        admin_ctxt = context.get_admin_context()
+        instance = db.instance_get_by_uuid(admin_ctxt, instance['uuid'])
+        self.mox.StubOutWithMock(self.compute.network_api,
+                                 'setup_networks_on_host')
+        self.compute.network_api.setup_networks_on_host(admin_ctxt, instance,
+                                                        self.compute.host)
+        self.mox.StubOutWithMock(self.compute.network_api,
+                                 'migrate_instance_finish')
+        migration = {'source_compute': instance['host'],
+                     'dest_compute': self.compute.host, }
+        self.compute.network_api.migrate_instance_finish(admin_ctxt,
+                                                         instance, migration)
+        self.mox.StubOutWithMock(self.compute.driver,
+                                 'post_live_migration_at_destination')
+        fake_net_info = []
+        self.compute.driver.post_live_migration_at_destination(admin_ctxt,
+                                                               instance,
+                                                               fake_net_info,
+                                                               False)
+        self.compute.network_api.setup_networks_on_host(admin_ctxt, instance,
+                                                        self.compute.host)
+
+        self.mox.ReplayAll()
+        self.compute.post_live_migration_at_destination(admin_ctxt, instance)
+        instance = db.instance_get_by_uuid(admin_ctxt, instance['uuid'])
+        self.assertEqual(instance['host'], self.compute.host)
+        self.assertEqual(instance['vm_state'], vm_states.ACTIVE)
+        self.assertEqual(instance['task_state'], None)
 
     def test_run_kill_vm(self):
         """Detect when a vm is terminated behind the scenes"""
@@ -2537,15 +2568,15 @@ class ComputeTestCase(BaseTestCase):
         self.compute.driver.list_instances().AndReturn(['herp', 'derp'])
         self.compute.host = 'host'
 
-        instance1 = mox.MockAnything()
-        instance1.name = 'herp'
-        instance1.deleted = True
-        instance1.deleted_at = "sometimeago"
+        instance1 = {}
+        instance1['name'] = 'herp'
+        instance1['deleted'] = True
+        instance1['deleted_at'] = "sometimeago"
 
-        instance2 = mox.MockAnything()
-        instance2.name = 'derp'
-        instance2.deleted = False
-        instance2.deleted_at = None
+        instance2 = {}
+        instance2['name'] = 'derp'
+        instance2['deleted'] = False
+        instance2['deleted_at'] = None
 
         self.mox.StubOutWithMock(timeutils, 'is_older_than')
         timeutils.is_older_than('sometimeago',
@@ -3980,6 +4011,7 @@ class ComputeAPITestCase(BaseTestCase):
         instance = self._create_fake_instance(dict(host='host2'))
         instance = db.instance_get_by_uuid(self.context, instance['uuid'])
         instance = jsonutils.to_primitive(instance)
+        instance['instance_type']['extra_specs'] = []
         orig_instance_type = instance['instance_type']
         self.compute.run_instance(self.context, instance=instance)
         # We need to set the host to something 'known'.  Unfortunately,
@@ -4696,6 +4728,23 @@ class ComputeAPITestCase(BaseTestCase):
 
         db.instance_destroy(self.context, instance['uuid'])
 
+    def test_get_backdoor_port(self):
+        """Test api call to get backdoor_port"""
+        fake_backdoor_port = 59697
+
+        self.mox.StubOutWithMock(rpc, 'call')
+
+        rpc_msg = {'method': 'get_backdoor_port',
+                   'args': {},
+                   'version': compute_rpcapi.ComputeAPI.BASE_RPC_API_VERSION}
+        rpc.call(self.context, 'compute.fake_host', rpc_msg,
+                 None).AndReturn(fake_backdoor_port)
+
+        self.mox.ReplayAll()
+
+        port = self.compute_api.get_backdoor_port(self.context, 'fake_host')
+        self.assertEqual(port, fake_backdoor_port)
+
     def test_console_output(self):
         fake_instance = {'uuid': 'fake_uuid',
                          'host': 'fake_compute_host'}
@@ -5144,6 +5193,19 @@ class ComputeAPIAggrTestCase(BaseTestCase):
         self.assertRaises(exception.ComputeHostNotFound,
                           self.api.remove_host_from_aggregate,
                           self.context, aggr['id'], 'invalid_host')
+
+
+class ComputeBackdoorPortTestCase(BaseTestCase):
+    """This is for unit test coverage of backdoor port rpc"""
+
+    def setUp(self):
+        super(ComputeBackdoorPortTestCase, self).setUp()
+        self.context = context.get_admin_context()
+        self.compute.backdoor_port = 59697
+
+    def test_get_backdoor_port(self):
+        port = self.compute.get_backdoor_port(self.context)
+        self.assertEqual(port, self.compute.backdoor_port)
 
 
 class ComputeAggrTestCase(BaseTestCase):
@@ -5832,8 +5894,8 @@ class ComputeRescheduleOrReraiseTestCase(BaseTestCase):
 
             self.compute._deallocate_network(self.context,
                     self.instance)
-            self.compute._reschedule(self.context, None, instance_uuid,
-                    {}, self.compute.scheduler_rpcapi.run_instance,
+            self.compute._reschedule(self.context, None, {}, instance_uuid,
+                    self.compute.scheduler_rpcapi.run_instance,
                     method_args, task_states.SCHEDULING).AndReturn(True)
             self.compute._log_original_error(exc_info, instance_uuid)
 

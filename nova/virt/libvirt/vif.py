@@ -19,9 +19,7 @@
 
 """VIF drivers for libvirt."""
 
-from nova import config
 from nova import exception
-from nova import flags
 from nova.network import linux_net
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
@@ -42,9 +40,10 @@ libvirt_vif_opts = [
                 help='Use virtio for bridge interfaces'),
 ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(libvirt_vif_opts)
 CONF.import_opt('libvirt_type', 'nova.virt.libvirt.driver')
+CONF.import_opt('use_ipv6', 'nova.config')
 
 LINUX_DEV_LEN = 14
 
@@ -145,7 +144,7 @@ class LibvirtOpenVswitchDriver(vif.VIFDriver):
         network, mapping = vif
         iface_id = mapping['vif_uuid']
         dev = self.get_dev_name(iface_id)
-        if not linux_net._device_exists(dev):
+        if not linux_net.device_exists(dev):
             # Older version of the command 'ip' from the iproute2 package
             # don't have support for the tuntap option (lp:882568).  If it
             # turns out we're on an old version we work around this by using
@@ -213,10 +212,10 @@ class LibvirtHybridOVSBridgeDriver(LibvirtBridgeDriver,
         br_name = self.get_br_name(iface_id)
         v1_name, v2_name = self.get_veth_pair_names(iface_id)
 
-        if not linux_net._device_exists(br_name):
+        if not linux_net.device_exists(br_name):
             utils.execute('brctl', 'addbr', br_name, run_as_root=True)
 
-        if not linux_net._device_exists(v2_name):
+        if not linux_net.device_exists(v2_name):
             linux_net._create_veth_pair(v1_name, v2_name)
             utils.execute('ip', 'link', 'set', br_name, 'up', run_as_root=True)
             utils.execute('brctl', 'addif', br_name, v1_name, run_as_root=True)
@@ -276,6 +275,9 @@ class LibvirtOpenVswitchVirtualPortDriver(vif.VIFDriver):
 class QuantumLinuxBridgeVIFDriver(vif.VIFDriver):
     """VIF driver for Linux Bridge when running Quantum."""
 
+    def get_bridge_name(self, network_id):
+        return ("brq" + network_id)[:LINUX_DEV_LEN]
+
     def get_dev_name(self, iface_id):
         return ("tap" + iface_id)[:LINUX_DEV_LEN]
 
@@ -284,28 +286,20 @@ class QuantumLinuxBridgeVIFDriver(vif.VIFDriver):
         iface_id = mapping['vif_uuid']
         dev = self.get_dev_name(iface_id)
 
-        if CONF.libvirt_type != 'xen':
-            linux_net.QuantumLinuxBridgeInterfaceDriver.create_tap_dev(dev)
+        bridge = self.get_bridge_name(network['id'])
+        linux_net.LinuxBridgeInterfaceDriver.ensure_bridge(bridge, None,
+                                                           filtering=False)
 
         conf = vconfig.LibvirtConfigGuestInterface()
-
-        if CONF.libvirt_use_virtio_for_bridges:
-            conf.model = 'virtio'
-        conf.net_type = "ethernet"
         conf.target_dev = dev
-        if CONF.libvirt_type != 'xen':
-            conf.script = ""
+        conf.net_type = "bridge"
         conf.mac_addr = mapping['mac']
+        conf.source_dev = bridge
+        if CONF.libvirt_use_virtio_for_bridges:
+            conf.model = "virtio"
 
         return conf
 
     def unplug(self, instance, vif):
-        """Unplug the VIF by deleting the port from the bridge."""
-        network, mapping = vif
-        dev = self.get_dev_name(mapping['vif_uuid'])
-        try:
-            if CONF.libvirt_type != 'xen':
-                utils.execute('ip', 'link', 'delete', dev, run_as_root=True)
-        except exception.ProcessExecutionError:
-            LOG.warning(_("Failed while unplugging vif"), instance=instance)
-            raise
+        """No action needed.  Libvirt takes care of cleanup"""
+        pass

@@ -22,7 +22,6 @@ import inspect
 
 from nova.db import base
 from nova import exception
-from nova import flags
 from nova.network import model as network_model
 from nova.network import rpcapi as network_rpcapi
 from nova.openstack.common import log as logging
@@ -123,6 +122,9 @@ class API(base.Base):
     def get_floating_ips_by_fixed_address(self, context, fixed_address):
         return self.network_rpcapi.get_floating_ips_by_fixed_address(context,
                 fixed_address)
+
+    def get_backdoor_port(self, context):
+        return self.network_rpcapi.get_backdoor_port(context)
 
     def get_instance_id_by_floating_address(self, context, address):
         # NOTE(tr3buchet): i hate this

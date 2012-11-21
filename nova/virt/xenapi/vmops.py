@@ -30,10 +30,8 @@ from nova.compute import api as compute
 from nova.compute import power_state
 from nova.compute import vm_mode
 from nova.compute import vm_states
-from nova import config
 from nova import context as nova_context
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import excutils
 from nova.openstack.common import importutils
@@ -60,8 +58,9 @@ xenapi_vmops_opts = [
                help='The XenAPI VIF driver using XenServer Network APIs.')
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(xenapi_vmops_opts)
+CONF.import_opt('host', 'nova.config')
 CONF.import_opt('vncserver_proxyclient_address', 'nova.vnc')
 
 DEFAULT_FIREWALL_DRIVER = "%s.%s" % (
@@ -743,7 +742,10 @@ class VMOps(object):
                                                total_steps=RESIZE_TOTAL_STEPS)
 
         # 3. Now power down the instance
-        vm_utils.clean_shutdown_vm(self._session, instance, vm_ref)
+        if not vm_utils.clean_shutdown_vm(self._session, instance, vm_ref):
+            LOG.debug(_("Clean shutdown did not complete successfully, "
+                        "trying hard shutdown."), instance=instance)
+            vm_utils.hard_shutdown_vm(self._session, instance, vm_ref)
         self._update_instance_progress(context, instance,
                                        step=3,
                                        total_steps=RESIZE_TOTAL_STEPS)

@@ -19,8 +19,6 @@ import abc
 import contextlib
 import os
 
-from nova import config
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import excutils
 from nova.openstack.common import fileutils
@@ -47,7 +45,7 @@ __imagebackend_opts = [
                  ' if this flag is set to True.'),
         ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(__imagebackend_opts)
 
 

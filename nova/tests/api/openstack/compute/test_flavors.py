@@ -26,7 +26,6 @@ import nova.compute.instance_types
 from nova import context
 from nova import db
 from nova import exception
-from nova import flags
 from nova import test
 from nova.tests.api.openstack import fakes
 from nova.tests import matchers

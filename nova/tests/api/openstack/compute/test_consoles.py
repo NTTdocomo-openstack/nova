@@ -17,7 +17,7 @@
 #    under the License.
 
 import datetime
-import uuid as uuidutils
+import uuid as stdlib_uuid
 
 from lxml import etree
 import webob
@@ -27,7 +27,6 @@ from nova.compute import vm_states
 from nova import console
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import timeutils
 from nova import test
 from nova.tests.api.openstack import fakes
@@ -58,7 +57,7 @@ class FakeInstanceDB(object):
         if id is None:
             id = self.max_id + 1
         if uuid is None:
-            uuid = str(uuidutils.uuid4())
+            uuid = str(stdlib_uuid.uuid4())
         instance = stub_instance(id, uuid=uuid)
         self.instances_by_id[id] = instance
         self.ids_by_uuid[uuid] = id
@@ -134,7 +133,7 @@ class ConsolesControllerTest(test.TestCase):
                        self.instance_db.return_server_by_id)
         self.stubs.Set(db, 'instance_get_by_uuid',
                        self.instance_db.return_server_by_uuid)
-        self.uuid = str(uuidutils.uuid4())
+        self.uuid = str(stdlib_uuid.uuid4())
         self.url = '/v2/fake/servers/%s/consoles' % self.uuid
         self.controller = consoles.Controller()
 

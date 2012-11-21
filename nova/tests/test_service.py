@@ -23,11 +23,9 @@ Unit Tests for remote procedure calls using queue
 import mox
 import sys
 
-from nova import config
 from nova import context
 from nova import db
 from nova import exception
-from nova import flags
 from nova import manager
 from nova.openstack.common import cfg
 from nova import service
@@ -47,7 +45,7 @@ test_service_opts = [
                help="Port number to bind test service to"),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(test_service_opts)
 
 
@@ -160,7 +158,7 @@ class ServiceTestCase(test.TestCase):
         self._service_start_mocks()
         # pre_start_hook is called after service record is created,
         # but before RPC consumer is created
-        self.manager_mock.pre_start_hook()
+        self.manager_mock.pre_start_hook(rpc_connection=mox.IgnoreArg())
         self.manager_mock.create_rpc_dispatcher()
         # post_start_hook is called after RPC consumer is created.
         self.manager_mock.post_start_hook()

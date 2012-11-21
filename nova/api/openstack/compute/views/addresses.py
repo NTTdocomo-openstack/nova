@@ -18,7 +18,6 @@
 import itertools
 
 from nova.api.openstack import common
-from nova import flags
 from nova.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)

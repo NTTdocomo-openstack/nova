@@ -27,7 +27,6 @@ Cert manager manages x509 certificates.
 import base64
 
 from nova import crypto
-from nova import flags
 from nova import manager
 from nova.openstack.common import log as logging
 

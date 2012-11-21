@@ -25,7 +25,6 @@ from nova.api.openstack import xmlutil
 from nova.compute import api as compute_api
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -34,11 +33,7 @@ authorize = extensions.extension_authorizer('compute', 'hosts')
 
 class HostIndexTemplate(xmlutil.TemplateBuilder):
     def construct(self):
-        def shimmer(obj, do_raise=False):
-            # A bare list is passed in; we need to wrap it in a dict
-            return dict(hosts=obj)
-
-        root = xmlutil.TemplateElement('hosts', selector=shimmer)
+        root = xmlutil.TemplateElement('hosts')
         elem = xmlutil.SubTemplateElement(root, 'host', selector='hosts')
         elem.set('host_name')
         elem.set('service')

@@ -23,7 +23,6 @@ import mox
 from nova import crypto
 from nova import db
 from nova import exception
-from nova import flags
 from nova import test
 from nova import utils
 

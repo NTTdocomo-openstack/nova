@@ -38,7 +38,6 @@ from nova.api.ec2 import ec2utils
 from nova import block_device
 from nova import context
 from nova import exception
-from nova import flags
 from nova.openstack.common import timeutils
 from nova import test
 from nova.tests import matchers

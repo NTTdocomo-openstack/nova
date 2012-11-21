@@ -38,18 +38,19 @@ from sqlalchemy.sql import func
 from nova import block_device
 from nova.common.sqlalchemyutils import paginate_query
 from nova.compute import vm_states
-from nova import config
 from nova import db
 from nova.db.sqlalchemy import models
 from nova.db.sqlalchemy.session import get_session
 from nova import exception
-from nova import flags
+from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils
 from nova.openstack.common import uuidutils
 
 
-CONF = config.CONF
+CONF = cfg.CONF
+CONF.import_opt('compute_topic', 'nova.config')
+CONF.import_opt('sql_connection', 'nova.config')
 
 LOG = logging.getLogger(__name__)
 
@@ -1153,8 +1154,9 @@ def fixed_ip_get_by_address(context, address, session=None):
 
 @require_admin_context
 def fixed_ip_get_by_address_detailed(context, address, session=None):
-    # This method returns a tuple of (models.FixedIp, models.Network,
-    # models.Instance).
+    """
+    :returns: a tuple of (models.FixedIp, models.Network, models.Instance)
+    """
     if not session:
         session = get_session()
 
@@ -1351,6 +1353,34 @@ def _metadata_refs(metadata_dict, meta_class):
     return metadata_refs
 
 
+def _validate_unique_server_name(context, session, name):
+    if not CONF.osapi_compute_unique_server_name_scope:
+        return
+
+    search_opts = {'deleted': False}
+    if CONF.osapi_compute_unique_server_name_scope == 'project':
+        search_opts['project_id'] = context.project_id
+        instance_list = instance_get_all_by_filters(context, search_opts,
+                                                    'created_at', 'desc',
+                                                    session=session)
+    elif CONF.osapi_compute_unique_server_name_scope == 'global':
+        instance_list = instance_get_all_by_filters(context.elevated(),
+                                                    search_opts,
+                                                    'created_at', 'desc',
+                                                    session=session)
+    else:
+        msg = _('Unknown osapi_compute_unique_server_name_scope value: %s'
+                ' Flag must be empty, "global" or'
+                ' "project"') % CONF.osapi_compute_unique_server_name_scope
+        LOG.warn(msg)
+        return
+
+    lowername = name.lower()
+    for instance in instance_list:
+        if instance['hostname'].lower() == lowername:
+            raise exception.InstanceExists(name=instance['hostname'])
+
+
 @require_context
 def instance_create(context, values):
     """Create a new Instance record in the database.
@@ -1390,6 +1420,8 @@ def instance_create(context, values):
 
     session = get_session()
     with session.begin():
+        if 'hostname' in values:
+            _validate_unique_server_name(context, session, values['hostname'])
         instance_ref.security_groups = _get_sec_group_models(session,
                 security_groups)
         instance_ref.save(session=session)
@@ -1501,14 +1533,16 @@ def instance_get_all(context, columns_to_join=None):
 
 @require_context
 def instance_get_all_by_filters(context, filters, sort_key, sort_dir,
-                                limit=None, marker=None):
+                                limit=None, marker=None, session=None):
     """Return instances that match all filters.  Deleted instances
     will be returned by default, unless there's a filter that says
     otherwise"""
 
     sort_fn = {'desc': desc, 'asc': asc}
 
-    session = get_session()
+    if not session:
+        session = get_session()
+
     query_prefix = session.query(models.Instance).\
             options(joinedload('info_cache')).\
             options(joinedload('security_groups')).\
@@ -1807,6 +1841,18 @@ def _instance_update(context, instance_uuid, values, copy_old_instance=False):
     with session.begin():
         instance_ref = instance_get_by_uuid(context, instance_uuid,
                                             session=session)
+        # TODO(deva): remove extra_specs from here after it is included
+        #             in system_metadata. Until then, the baremetal driver
+        #             needs extra_specs added to instance[]
+        inst_type_ref = _instance_type_get_query(context, session=session).\
+                            filter_by(id=instance_ref['instance_type_id']).\
+                            first()
+        if inst_type_ref:
+            instance_ref['extra_specs'] = \
+                _dict_with_extra_specs(inst_type_ref).get('extra_specs', {})
+        else:
+            instance_ref['extra_specs'] = {}
+
         if "expected_task_state" in values:
             # it is not a db column so always pop out
             expected = values.pop("expected_task_state")
@@ -1816,6 +1862,12 @@ def _instance_update(context, instance_uuid, values, copy_old_instance=False):
             if actual_state not in expected:
                 raise exception.UnexpectedTaskStateError(actual=actual_state,
                                                          expected=expected)
+
+        if ("hostname" in values and
+            values["hostname"].lower() != instance_ref["hostname"].lower()):
+                _validate_unique_server_name(context,
+                                             session,
+                                             values['hostname'])
 
         if copy_old_instance:
             old_instance_ref = copy.copy(instance_ref)
@@ -2478,13 +2530,6 @@ def quota_usage_get_all_by_project(context, project_id):
         result[row.resource] = dict(in_use=row.in_use, reserved=row.reserved)
 
     return result
-
-
-@require_admin_context
-def quota_usage_create(context, project_id, resource, in_use, reserved,
-                       until_refresh):
-    return _quota_usage_create(context, project_id, resource, in_use,
-                                reserved, until_refresh)
 
 
 @require_admin_context

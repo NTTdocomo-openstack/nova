@@ -15,12 +15,11 @@
 import webob.dec
 import webob.exc
 
-from nova import config
 from nova import context
-from nova import flags
+from nova.openstack.common import cfg
 from nova import utils
 
-CONF = config.CONF
+CONF = cfg.CONF
 
 
 class Fault(webob.exc.HTTPException):

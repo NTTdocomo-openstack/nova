@@ -20,19 +20,18 @@
 """Unit tests for the DB API"""
 
 import datetime
-import uuid as uuidutils
+import uuid as stdlib_uuid
 
-from nova import config
 from nova import context
 from nova import db
 from nova import exception
-from nova import flags
+from nova.openstack.common import cfg
 from nova.openstack.common import timeutils
 from nova import test
 from nova.tests import matchers
 
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.import_opt('reserved_host_memory_mb', 'nova.compute.resource_tracker')
 CONF.import_opt('reserved_host_disk_mb', 'nova.compute.resource_tracker')
 
@@ -46,9 +45,45 @@ class DbApiTestCase(test.TestCase):
 
     def create_instances_with_args(self, **kwargs):
         args = {'reservation_id': 'a', 'image_ref': 1, 'host': 'host1',
-                'project_id': self.project_id}
+                'project_id': self.project_id, 'vm_state': 'fake'}
+        if 'context' in kwargs:
+            ctxt = kwargs.pop('context')
+            args['project_id'] = ctxt.project_id
+        else:
+            ctxt = self.context
         args.update(kwargs)
-        return db.instance_create(self.context, args)
+        return db.instance_create(ctxt, args)
+
+    def test_create_instance_unique_hostname(self):
+        otherprojectcontext = context.RequestContext(self.user_id,
+                                          "%s2" % self.project_id)
+
+        self.create_instances_with_args(hostname='fake_name')
+
+        # With scope 'global' any duplicate should fail, be it this project:
+        self.flags(osapi_compute_unique_server_name_scope='global')
+        self.assertRaises(exception.InstanceExists,
+                          self.create_instances_with_args,
+                          hostname='fake_name')
+
+        # or another:
+        self.assertRaises(exception.InstanceExists,
+                          self.create_instances_with_args,
+                          context=otherprojectcontext,
+                          hostname='fake_name')
+
+        # With scope 'project' a duplicate in the project should fail:
+        self.flags(osapi_compute_unique_server_name_scope='project')
+        self.assertRaises(exception.InstanceExists,
+                          self.create_instances_with_args,
+                          hostname='fake_name')
+
+        # With scope 'project' a duplicate in a different project should work:
+        self.flags(osapi_compute_unique_server_name_scope='project')
+        self.create_instances_with_args(context=otherprojectcontext,
+                                        hostname='fake_name')
+
+        self.flags(osapi_compute_unique_server_name_scope=None)
 
     def test_ec2_ids_not_found_are_printable(self):
         def check_exc_format(method):
@@ -146,7 +181,7 @@ class DbApiTestCase(test.TestCase):
         self.assertRaises(exception.MarkerNotFound,
                           db.instance_get_all_by_filters,
                           self.context, {'display_name': '%test%'},
-                          marker=str(uuidutils.uuid4()))
+                          marker=str(stdlib_uuid.uuid4()))
 
     def test_migration_get_unconfirmed_by_dest_compute(self):
         ctxt = context.get_admin_context()
@@ -292,6 +327,56 @@ class DbApiTestCase(test.TestCase):
         self.assertEqual(instance['instance_type']['name'],
                 inst_type2['name'])
 
+    def test_instance_update_unique_name(self):
+        otherprojectcontext = context.RequestContext(self.user_id,
+                                          "%s2" % self.project_id)
+
+        inst = self.create_instances_with_args(hostname='fake_name')
+        uuid1p1 = inst['uuid']
+        inst = self.create_instances_with_args(hostname='fake_name2')
+        uuid2p1 = inst['uuid']
+
+        inst = self.create_instances_with_args(context=otherprojectcontext,
+                                               hostname='fake_name3')
+        uuid1p2 = inst['uuid']
+
+        # osapi_compute_unique_server_name_scope is unset so this should work:
+        values = {'hostname': 'fake_name2'}
+        db.instance_update(self.context, uuid1p1, values)
+        values = {'hostname': 'fake_name'}
+        db.instance_update(self.context, uuid1p1, values)
+
+        # With scope 'global' any duplicate should fail.
+        self.flags(osapi_compute_unique_server_name_scope='global')
+        self.assertRaises(exception.InstanceExists,
+                          db.instance_update,
+                          self.context,
+                          uuid2p1,
+                          values)
+
+        self.assertRaises(exception.InstanceExists,
+                          db.instance_update,
+                          otherprojectcontext,
+                          uuid1p2,
+                          values)
+
+        # But we should definitely be able to update our name if we aren't
+        #  really changing it.
+        case_only_values = {'hostname': 'fake_NAME'}
+        db.instance_update(self.context, uuid1p1, case_only_values)
+
+        # With scope 'project' a duplicate in the project should fail:
+        self.flags(osapi_compute_unique_server_name_scope='project')
+        self.assertRaises(exception.InstanceExists,
+                          db.instance_update,
+                          self.context,
+                          uuid2p1,
+                          values)
+
+        # With scope 'project' a duplicate in a different project should work:
+        self.flags(osapi_compute_unique_server_name_scope='project')
+        db.instance_update(otherprojectcontext, uuid1p2, values)
+
     def test_instance_update_with_and_get_original(self):
         ctxt = context.get_admin_context()
 
@@ -304,10 +389,45 @@ class DbApiTestCase(test.TestCase):
         self.assertEquals("building", old_ref["vm_state"])
         self.assertEquals("needscoffee", new_ref["vm_state"])
 
+    def test_instance_update_with_extra_specs(self):
+        """Ensure _extra_specs are returned from _instance_update"""
+        ctxt = context.get_admin_context()
+
+        # create a flavor
+        inst_type_dict = dict(
+                    name="test_flavor",
+                    memory_mb=1,
+                    vcpus=1,
+                    root_gb=1,
+                    ephemeral_gb=1,
+                    flavorid=105)
+        inst_type_ref = db.instance_type_create(ctxt, inst_type_dict)
+
+        # add some extra spec to our flavor
+        spec = {'test_spec': 'foo'}
+        db.instance_type_extra_specs_update_or_create(
+                    ctxt,
+                    inst_type_ref['flavorid'],
+                    spec)
+
+        # create instance, just populates db, doesn't pull extra_spec
+        instance = db.instance_create(
+                    ctxt,
+                    {'instance_type_id': inst_type_ref['id']})
+        self.assertNotIn('extra_specs', instance)
+
+        # update instance, used when starting instance to set state, etc
+        (old_ref, new_ref) = db.instance_update_and_get_original(
+                    ctxt,
+                    instance['uuid'],
+                    {})
+        self.assertEquals(spec, old_ref['extra_specs'])
+        self.assertEquals(spec, new_ref['extra_specs'])
+
     def test_instance_fault_create(self):
         """Ensure we can create an instance fault"""
         ctxt = context.get_admin_context()
-        uuid = str(uuidutils.uuid4())
+        uuid = str(stdlib_uuid.uuid4())
 
         # Create a fault
         fault_values = {

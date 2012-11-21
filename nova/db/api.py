@@ -43,9 +43,7 @@ these objects be simple dictionaries.
 
 """
 
-from nova import config
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova import utils
 
@@ -65,7 +63,7 @@ db_opts = [
                help='Template string to be used to generate snapshot names'),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(db_opts)
 
 IMPL = utils.LazyPluggable('db_backend',
@@ -936,13 +934,6 @@ def quota_class_update(context, class_name, resource, limit):
 
 
 ###################
-
-
-def quota_usage_create(context, project_id, resource, in_use, reserved,
-                       until_refresh):
-    """Create a quota usage for the given project and resource."""
-    return IMPL.quota_usage_create(context, project_id, resource,
-                                   in_use, reserved, until_refresh)
 
 
 def quota_usage_get(context, project_id, resource):

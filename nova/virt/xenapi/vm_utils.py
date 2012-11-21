@@ -37,9 +37,7 @@ from eventlet import greenthread
 from nova import block_device
 from nova.compute import instance_types
 from nova.compute import power_state
-from nova import config
 from nova import exception
-from nova import flags
 from nova.image import glance
 from nova.openstack.common import cfg
 from nova.openstack.common import excutils
@@ -116,8 +114,13 @@ xenapi_vm_utils_opts = [
                     ' within a given dom0. (-1 = no limit)')
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(xenapi_vm_utils_opts)
+CONF.import_opt('cache_images', 'nova.config')
+CONF.import_opt('default_ephemeral_format', 'nova.config')
+CONF.import_opt('glance_num_retries', 'nova.config')
+CONF.import_opt('use_cow_images', 'nova.config')
+CONF.import_opt('use_ipv6', 'nova.config')
 
 XENAPI_POWER_STATE = {
     'Halted': power_state.SHUTDOWN,

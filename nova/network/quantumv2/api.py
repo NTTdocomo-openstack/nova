@@ -17,10 +17,8 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 from nova.compute import api as compute_api
-from nova import config
 from nova.db import base
 from nova import exception
-from nova import flags
 from nova.network.api import refresh_cache
 from nova.network import model as network_model
 from nova.network import quantumv2
@@ -52,8 +50,9 @@ quantum_opts = [
                     'quantum in admin context'),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(quantum_opts)
+CONF.import_opt('node_availability_zone', 'nova.config')
 CONF.import_opt('default_floating_pool', 'nova.network.manager')
 LOG = logging.getLogger(__name__)
 

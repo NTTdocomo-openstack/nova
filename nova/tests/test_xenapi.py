@@ -29,11 +29,10 @@ from nova.compute import instance_types
 from nova.compute import power_state
 from nova.compute import task_states
 from nova.compute import vm_states
-from nova import config
 from nova import context
 from nova import db
 from nova import exception
-from nova import flags
+from nova.openstack.common import cfg
 from nova.openstack.common import importutils
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
@@ -57,7 +56,11 @@ from nova.virt.xenapi import volume_utils
 
 LOG = logging.getLogger(__name__)
 
-CONF = config.CONF
+CONF = cfg.CONF
+CONF.import_opt('compute_manager', 'nova.config')
+CONF.import_opt('host', 'nova.config')
+CONF.import_opt('network_manager', 'nova.config')
+CONF.import_opt('node_availability_zone', 'nova.config')
 
 IMAGE_MACHINE = '1'
 IMAGE_KERNEL = '2'
@@ -2076,7 +2079,8 @@ class XenAPIAggregateTestCase(stubs.XenAPITestBase):
                    firewall_driver='nova.virt.xenapi.firewall.'
                                    'Dom0IptablesFirewallDriver',
                    host='host',
-                   compute_driver='xenapi.XenAPIDriver')
+                   compute_driver='xenapi.XenAPIDriver',
+                   node_availability_zone='avail_zone1')
         host_ref = xenapi_fake.get_all('host')[0]
         stubs.stubout_session(self.stubs, stubs.FakeSessionForVMTests)
         self.context = context.get_admin_context()

@@ -31,10 +31,8 @@ from nova.api.ec2 import apirequest
 from nova.api.ec2 import ec2utils
 from nova.api.ec2 import faults
 from nova.api import validator
-from nova import config
 from nova import context
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import importutils
 from nova.openstack.common import jsonutils
@@ -72,8 +70,9 @@ ec2_opts = [
                help='Time in seconds before ec2 timestamp expires'),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(ec2_opts)
+CONF.import_opt('memcached_servers', 'nova.config')
 CONF.import_opt('use_forwarded_for', 'nova.api.auth')
 
 

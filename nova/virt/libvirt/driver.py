@@ -59,10 +59,8 @@ from nova.api.metadata import base as instance_metadata
 from nova import block_device
 from nova.compute import power_state
 from nova.compute import vm_mode
-from nova import config
 from nova import context as nova_context
 from nova import exception
-from nova import flags
 from nova.image import glance
 from nova.openstack.common import cfg
 from nova.openstack.common import excutils
@@ -184,8 +182,12 @@ libvirt_opts = [
                     'before uploading them to image service'),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(libvirt_opts)
+CONF.import_opt('default_ephemeral_format', 'nova.config')
+CONF.import_opt('host', 'nova.config')
+CONF.import_opt('my_ip', 'nova.config')
+CONF.import_opt('use_cow_images', 'nova.config')
 CONF.import_opt('live_migration_retry_count', 'nova.compute.manager')
 CONF.import_opt('vncserver_proxyclient_address', 'nova.vnc')
 
@@ -1442,12 +1444,12 @@ class LibvirtDriver(driver.ComputeDriver):
                          instance=instance)
 
         if CONF.libvirt_type == 'lxc':
-            disk.setup_container(basepath('disk'),
+            disk.setup_container(image('disk').path,
                                  container_dir=container_dir,
                                  use_cow=CONF.use_cow_images)
 
         if CONF.libvirt_type == 'uml':
-            libvirt_utils.chown(basepath('disk'), 'root')
+            libvirt_utils.chown(image('disk').path, 'root')
 
     @staticmethod
     def _volume_in_mapping(mount_device, block_device_info):
@@ -2386,7 +2388,7 @@ class LibvirtDriver(driver.ComputeDriver):
             raise exception.InvalidCPUInfo(reason=m % locals())
 
     def _create_shared_storage_test_file(self):
-        """Makes tmpfile under CONF.instance_path."""
+        """Makes tmpfile under CONF.instances_path."""
         dirpath = CONF.instances_path
         fd, tmp_file = tempfile.mkstemp(dir=dirpath)
         LOG.debug(_("Creating tmpfile %s to notify to other "

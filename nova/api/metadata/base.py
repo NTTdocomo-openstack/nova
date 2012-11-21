@@ -25,10 +25,8 @@ import posixpath
 
 from nova.api.ec2 import ec2utils
 from nova import block_device
-from nova import config
 from nova import context
 from nova import db
-from nova import flags
 from nova import network
 from nova.openstack.common import cfg
 from nova.virt import netutils
@@ -42,7 +40,7 @@ metadata_opts = [
                      'config drive')),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(metadata_opts)
 CONF.import_opt('dhcp_domain', 'nova.network.manager')
 

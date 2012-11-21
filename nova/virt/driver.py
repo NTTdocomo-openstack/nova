@@ -22,7 +22,6 @@ Driver base-classes:
     types that support that contract
 """
 
-from nova import flags
 from nova.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -709,6 +708,7 @@ class ComputeDriver(object):
         related to other calls into the driver. The prime example is to clean
         the cache and remove images which are no longer of interest.
         """
+        pass
 
     def add_to_aggregate(self, context, aggregate, host, **kwargs):
         """Add a compute host to an aggregate."""

@@ -21,9 +21,7 @@ import os
 import shutil
 import tempfile
 
-from nova import config
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import fileutils
 from nova.openstack.common import log as logging
@@ -52,7 +50,7 @@ configdrive_opts = [
                     'ISO image creation')
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(configdrive_opts)
 
 

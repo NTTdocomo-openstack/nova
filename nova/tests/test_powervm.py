@@ -20,7 +20,6 @@ Test suite for PowerVMDriver.
 
 from nova import context
 from nova import db
-from nova import flags
 from nova import test
 
 from nova.compute import power_state

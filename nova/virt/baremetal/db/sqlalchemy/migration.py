@@ -22,7 +22,6 @@ from migrate.versioning import util as migrate_util
 import os
 import sqlalchemy
 
-from nova import config
 from nova import exception
 from nova.openstack.common import log as logging
 from nova.virt.baremetal.db import migration
@@ -58,7 +57,6 @@ from migrate import exceptions as versioning_exceptions
 from migrate.versioning import api as versioning_api
 from migrate.versioning.repository import Repository
 
-CONF = config.CONF
 
 _REPOSITORY = None
 

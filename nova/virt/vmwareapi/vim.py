@@ -26,8 +26,6 @@ try:
 except ImportError:
     suds = None
 
-from nova import config
-from nova import flags
 from nova.openstack.common import cfg
 from nova.virt.vmwareapi import error_util
 
@@ -42,7 +40,7 @@ vmwareapi_wsdl_loc_opt = cfg.StrOpt('vmwareapi_wsdl_loc',
              'Due to a bug in vSphere ESX 4.1 default wsdl. '
              'Refer readme-vmware to setup')
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opt(vmwareapi_wsdl_loc_opt)
 
 

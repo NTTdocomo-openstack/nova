@@ -23,7 +23,6 @@ from nova.compute import power_state
 from nova import context
 from nova import db
 from nova import exception
-from nova import flags
 from nova import test
 import nova.tests.image.fake
 from nova.tests.vmwareapi import db_fakes

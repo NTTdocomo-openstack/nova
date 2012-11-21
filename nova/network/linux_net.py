@@ -24,10 +24,8 @@ import inspect
 import netaddr
 import os
 
-from nova import config
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import fileutils
 from nova.openstack.common import importutils
@@ -88,8 +86,16 @@ linux_net_opts = [
                      'get default gateway from dhcp server'),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(linux_net_opts)
+CONF.import_opt('bindir', 'nova.config')
+CONF.import_opt('fake_network', 'nova.config')
+CONF.import_opt('host', 'nova.config')
+CONF.import_opt('metadata_host', 'nova.config')
+CONF.import_opt('metadata_port', 'nova.config')
+CONF.import_opt('use_ipv6', 'nova.config')
+CONF.import_opt('my_ip', 'nova.config')
+CONF.import_opt('state_path', 'nova.config')
 
 
 # NOTE(vish): Iptables supports chain names of up to 28 characters,  and we
@@ -756,6 +762,7 @@ def get_dhcp_opts(context, network_ref):
                 default_gw_vif[instance_uuid] = vifs[0]['id']
 
         for datum in data:
+            instance_uuid = datum['instance_uuid']
             if instance_uuid in default_gw_vif:
                 # we don't want default gateway for this fixed ip
                 if default_gw_vif[instance_uuid] != datum['vif_id']:
@@ -952,7 +959,7 @@ def _execute(*cmd, **kwargs):
         return utils.execute(*cmd, **kwargs)
 
 
-def _device_exists(device):
+def device_exists(device):
     """Check if ethernet device exists."""
     (_out, err) = _execute('ip', 'link', 'show', 'dev', device,
                            check_exit_code=False, run_as_root=True)
@@ -1021,7 +1028,7 @@ def _create_veth_pair(dev1_name, dev2_name):
     deleting any previous devices with those names.
     """
     for dev in [dev1_name, dev2_name]:
-        if _device_exists(dev):
+        if device_exists(dev):
             try:
                 utils.execute('ip', 'link', 'delete', dev1_name,
                               run_as_root=True, check_exit_code=[0, 2, 254])
@@ -1124,7 +1131,7 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
     def ensure_vlan(_self, vlan_num, bridge_interface, mac_address=None):
         """Create a vlan unless it already exists."""
         interface = 'vlan%s' % vlan_num
-        if not _device_exists(interface):
+        if not device_exists(interface):
             LOG.debug(_('Starting VLAN inteface %s'), interface)
             _execute('ip', 'link', 'add', 'link', bridge_interface,
                      'name', interface, 'type', 'vlan',
@@ -1146,11 +1153,14 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
 
     @classmethod
     @lockutils.synchronized('ensure_bridge', 'nova-', external=True)
-    def ensure_bridge(_self, bridge, interface, net_attrs=None, gateway=True):
+    def ensure_bridge(_self, bridge, interface, net_attrs=None, gateway=True,
+                      filtering=True):
         """Create a bridge unless it already exists.
 
         :param interface: the interface to create the bridge on.
         :param net_attrs: dictionary with  attributes used to create bridge.
+        :param gateway: whether or not the bridge is a gateway.
+        :param filtering: whether or not to create filters on the bridge.
 
         If net_attrs is set, it will add the net_attrs['gateway'] to the bridge
         using net_attrs['broadcast'] and net_attrs['cidr'].  It will also add
@@ -1160,8 +1170,8 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
         interface onto the bridge and reset the default gateway if necessary.
 
         """
-        if not _device_exists(bridge):
-            LOG.debug(_('Starting Bridge interface for %s'), interface)
+        if not device_exists(bridge):
+            LOG.debug(_('Starting Bridge %s'), bridge)
             _execute('brctl', 'addbr', bridge, run_as_root=True)
             _execute('brctl', 'setfd', bridge, 0, run_as_root=True)
             # _execute('brctl setageing %s 10' % bridge, run_as_root=True)
@@ -1173,6 +1183,8 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
             _execute('ip', 'link', 'set', bridge, 'up', run_as_root=True)
 
         if interface:
+            msg = _('Adding interface %(interface)s to bridge %(bridge)s')
+            LOG.debug(msg % locals())
             out, err = _execute('brctl', 'addif', bridge, interface,
                                 check_exit_code=False, run_as_root=True)
 
@@ -1207,18 +1219,19 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
                 msg = _('Failed to add interface: %s') % err
                 raise exception.NovaException(msg)
 
-        # Don't forward traffic unless we were told to be a gateway
-        ipv4_filter = iptables_manager.ipv4['filter']
-        if gateway:
-            ipv4_filter.add_rule('FORWARD',
-                                 '--in-interface %s -j ACCEPT' % bridge)
-            ipv4_filter.add_rule('FORWARD',
-                                 '--out-interface %s -j ACCEPT' % bridge)
-        else:
-            ipv4_filter.add_rule('FORWARD',
-                                 '--in-interface %s -j DROP' % bridge)
-            ipv4_filter.add_rule('FORWARD',
-                                 '--out-interface %s -j DROP' % bridge)
+        if filtering:
+            # Don't forward traffic unless we were told to be a gateway
+            ipv4_filter = iptables_manager.ipv4['filter']
+            if gateway:
+                ipv4_filter.add_rule('FORWARD',
+                                     '--in-interface %s -j ACCEPT' % bridge)
+                ipv4_filter.add_rule('FORWARD',
+                                     '--out-interface %s -j ACCEPT' % bridge)
+            else:
+                ipv4_filter.add_rule('FORWARD',
+                                     '--in-interface %s -j DROP' % bridge)
+                ipv4_filter.add_rule('FORWARD',
+                                     '--out-interface %s -j DROP' % bridge)
 
 
 # plugs interfaces using Open vSwitch
@@ -1226,7 +1239,7 @@ class LinuxOVSInterfaceDriver(LinuxNetInterfaceDriver):
 
     def plug(self, network, mac_address, gateway=True):
         dev = self.get_dev(network)
-        if not _device_exists(dev):
+        if not device_exists(dev):
             bridge = CONF.linuxnet_ovs_integration_bridge
             _execute('ovs-vsctl',
                      '--', '--may-exist', 'add-port', bridge, dev,
@@ -1304,7 +1317,7 @@ class QuantumLinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
 
         QuantumLinuxBridgeInterfaceDriver.create_tap_dev(dev, mac_address)
 
-        if not _device_exists(bridge):
+        if not device_exists(bridge):
             LOG.debug(_("Starting bridge %s "), bridge)
             utils.execute('brctl', 'addbr', bridge, run_as_root=True)
             utils.execute('brctl', 'setfd', bridge, str(0), run_as_root=True)
@@ -1325,7 +1338,7 @@ class QuantumLinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
     def unplug(self, network):
         dev = self.get_dev(network)
 
-        if not _device_exists(dev):
+        if not device_exists(dev):
             return None
         else:
             try:
@@ -1339,7 +1352,7 @@ class QuantumLinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
 
     @classmethod
     def create_tap_dev(_self, dev, mac_address=None):
-        if not _device_exists(dev):
+        if not device_exists(dev):
             try:
                 # First, try with 'ip'
                 utils.execute('ip', 'tuntap', 'add', dev, 'mode', 'tap',

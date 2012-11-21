@@ -31,9 +31,8 @@ setattr(__builtin__, '_', lambda x: x)
 import os
 import shutil
 
-from nova import config
 from nova.db.sqlalchemy.session import get_engine
-from nova import flags
+from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 
 import eventlet
@@ -41,7 +40,10 @@ import eventlet
 
 eventlet.monkey_patch(os=False)
 
-CONF = config.CONF
+CONF = cfg.CONF
+CONF.import_opt('sql_connection', 'nova.config')
+CONF.import_opt('sqlite_db', 'nova.config')
+CONF.import_opt('state_path', 'nova.config')
 CONF.set_override('use_stderr', False)
 
 logging.setup('nova')

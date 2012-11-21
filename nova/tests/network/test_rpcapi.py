@@ -18,14 +18,14 @@
 Unit Tests for nova.network.rpcapi
 """
 
-from nova import config
 from nova import context
-from nova import flags
 from nova.network import rpcapi as network_rpcapi
+from nova.openstack.common import cfg
 from nova.openstack.common import rpc
 from nova import test
 
-CONF = config.CONF
+CONF = cfg.CONF
+CONF.import_opt('network_topic', 'nova.config')
 
 
 class NetworkRpcAPITestCase(test.TestCase):
@@ -120,6 +120,9 @@ class NetworkRpcAPITestCase(test.TestCase):
     def test_get_instance_id_by_floating_address(self):
         self._test_network_api('get_instance_id_by_floating_address',
                 rpc_method='call', address='w.x.y.z')
+
+    def test_get_backdoor_port(self):
+        self._test_network_api('get_backdoor_port', rpc_method='call')
 
     def test_get_vifs_by_instance(self):
         self._test_network_api('get_vifs_by_instance',

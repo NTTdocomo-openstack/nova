@@ -18,15 +18,16 @@
 
 import mox
 
-from nova import config
 from nova import context
 from nova import exception
+from nova.openstack.common import cfg
 from nova.openstack.common import importutils
 from nova import test
 from nova.virt import fake
 
 
-CONF = config.CONF
+CONF = cfg.CONF
+CONF.import_opt('compute_manager', 'nova.config')
 
 
 class BaseTestCase(test.TestCase):

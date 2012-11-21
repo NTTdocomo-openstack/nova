@@ -29,7 +29,6 @@ from nova import compute
 from nova.compute import api as compute_api
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)

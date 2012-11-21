@@ -36,9 +36,7 @@ import time
 
 from eventlet import event
 
-from nova import config
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova import utils
@@ -82,7 +80,7 @@ vmwareapi_opts = [
                help='Physical ethernet adapter name for vlan networking'),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(vmwareapi_opts)
 
 TIME_BETWEEN_API_CALL_RETRIES = 2.0

@@ -23,7 +23,6 @@ import urllib2
 
 from nova import context
 from nova import exception
-from nova import flags
 from nova.openstack.common import policy as common_policy
 from nova import policy
 from nova import test

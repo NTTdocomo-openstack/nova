@@ -30,13 +30,11 @@ import time
 import eventlet
 import greenlet
 
-from nova.common import eventlet_backdoor
-from nova import config
 from nova import context
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
+from nova.openstack.common import eventlet_backdoor
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import rpc
@@ -91,8 +89,10 @@ service_opts = [
                help='Number of workers for metadata service'),
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(service_opts)
+CONF.import_opt('host', 'nova.config')
+CONF.import_opt('node_availability_zone', 'nova.config')
 
 
 class SignalExit(SystemExit):
@@ -111,7 +111,7 @@ class Launcher(object):
 
         """
         self._services = []
-        eventlet_backdoor.initialize_if_enabled()
+        self.backdoor_port = eventlet_backdoor.initialize_if_enabled()
 
     @staticmethod
     def run_server(server):
@@ -131,6 +131,8 @@ class Launcher(object):
         :returns: None
 
         """
+        if self.backdoor_port is not None:
+            server.backdoor_port = self.backdoor_port
         gt = eventlet.spawn(self.run_server, server)
         self._services.append(gt)
 
@@ -382,6 +384,7 @@ class Service(object):
         self.periodic_fuzzy_delay = periodic_fuzzy_delay
         self.saved_args, self.saved_kwargs = args, kwargs
         self.timers = []
+        self.backdoor_port = None
 
     def start(self):
         vcs_string = version.version_string_with_vcs()
@@ -398,11 +401,14 @@ class Service(object):
         except exception.NotFound:
             self._create_service_ref(ctxt)
 
-        self.manager.pre_start_hook()
+        if self.backdoor_port is not None:
+            self.manager.backdoor_port = self.backdoor_port
 
         self.conn = rpc.create_connection(new=True)
         LOG.debug(_("Creating Consumer connection for Service %s") %
                   self.topic)
+
+        self.manager.pre_start_hook(rpc_connection=self.conn)
 
         rpc_dispatcher = self.manager.create_rpc_dispatcher()
 
@@ -472,8 +478,10 @@ class Service(object):
         if not topic:
             topic = binary.rpartition('nova-')[2]
         if not manager:
-            manager = CONF.get('%s_manager' %
-                                binary.rpartition('nova-')[2], None)
+            manager_cls = ('%s_manager' %
+                           binary.rpartition('nova-')[2])
+            CONF.import_opt(manager_cls, 'nova.config')
+            manager = CONF.get(manager_cls, None)
         if report_interval is None:
             report_interval = CONF.report_interval
         if periodic_interval is None:
@@ -578,6 +586,7 @@ class WSGIService(object):
                                   port=self.port)
         # Pull back actual port used
         self.port = self.server.port
+        self.backdoor_port = None
 
     def _get_manager(self):
         """Initialize a Manager object appropriate for this service.
@@ -612,6 +621,8 @@ class WSGIService(object):
         if self.manager:
             self.manager.init_host()
             self.manager.pre_start_hook()
+        if self.backdoor_port is not None:
+            self.manager.backdoor_port = self.backdoor_port
         self.server.start()
         if self.manager:
             self.manager.post_start_hook()

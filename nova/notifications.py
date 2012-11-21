@@ -19,11 +19,9 @@
 the system.
 """
 
-from nova import config
 import nova.context
 from nova import db
 from nova import exception
-from nova import flags
 from nova import network
 from nova.network import model as network_model
 from nova.openstack.common import cfg
@@ -51,7 +49,7 @@ notify_api_faults = cfg.BoolOpt('notify_api_faults', default=False,
          'in the API service.')
 
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opt(notify_state_opt)
 CONF.register_opt(notify_any_opt)
 CONF.register_opt(notify_api_faults)
@@ -300,6 +298,7 @@ def info_from_instance(context, instance_ref, network_info,
         instance_id=instance_ref['uuid'],
         display_name=instance_ref['display_name'],
         reservation_id=instance_ref['reservation_id'],
+        hostname=instance_ref['hostname'],
 
         # Type properties
         instance_type=instance_type_name,

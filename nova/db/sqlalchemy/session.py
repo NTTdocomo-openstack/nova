@@ -169,13 +169,17 @@ import sqlalchemy.interfaces
 import sqlalchemy.orm
 from sqlalchemy.pool import NullPool, StaticPool
 
-from nova import config
 import nova.exception
-import nova.flags as flags
+from nova.openstack.common import cfg
 import nova.openstack.common.log as logging
 
 
-CONF = config.CONF
+CONF = cfg.CONF
+CONF.import_opt('sql_connection', 'nova.config')
+CONF.import_opt('sql_idle_timeout', 'nova.config')
+CONF.import_opt('sqlite_synchronous', 'nova.config')
+CONF.import_opt('sql_max_retries', 'nova.config')
+CONF.import_opt('sql_retry_interval', 'nova.config')
 LOG = logging.getLogger(__name__)
 
 _ENGINE = None
@@ -272,6 +276,11 @@ def create_engine(sql_connection):
         "echo": False,
         'convert_unicode': True,
     }
+
+    if CONF.sql_pool_size is not None:
+        engine_args['pool_size'] = CONF.sql_pool_size
+    if CONF.sql_max_overflow is not None:
+        engine_args['max_overflow'] = CONF.sql_max_overflow
 
     # Map our SQL debug level to SQLAlchemy's options
     if CONF.sql_connection_debug >= 100:

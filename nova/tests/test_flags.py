@@ -18,11 +18,10 @@
 #    under the License.
 
 from nova import config
-from nova import flags
 from nova.openstack.common import cfg
 from nova import test
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opt(cfg.StrOpt('flags_unittest',
                               default='foo',
                               help='for testing purposes only'))

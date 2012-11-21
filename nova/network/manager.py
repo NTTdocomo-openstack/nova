@@ -55,10 +55,8 @@ from eventlet import greenpool
 import netaddr
 
 from nova.compute import api as compute_api
-from nova import config
 from nova import context
 from nova import exception
-from nova import flags
 from nova import ipv6
 from nova import manager
 from nova.network import api as network_api
@@ -162,8 +160,15 @@ network_opts = [
                help="Indicates underlying L3 management library")
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(network_opts)
+CONF.import_opt('fake_network', 'nova.config')
+CONF.import_opt('floating_ip_dns_manager', 'nova.config')
+CONF.import_opt('instance_dns_domain', 'nova.config')
+CONF.import_opt('instance_dns_manager', 'nova.config')
+CONF.import_opt('network_driver', 'nova.config')
+CONF.import_opt('use_ipv6', 'nova.config')
+CONF.import_opt('my_ip', 'nova.config')
 
 
 class RPCAllocateFixedIP(object):
@@ -665,11 +670,13 @@ class FloatingIP(object):
         return False if floating_ip.get('fixed_ip_id') else True
 
     @wrap_check_policy
-    def migrate_instance_start(self, context, instance_uuid, rxtx_factor,
-                               project_id, source, dest, floating_addresses):
+    def migrate_instance_start(self, context, instance_uuid,
+                               floating_addresses,
+                               rxtx_factor=None, project_id=None,
+                               source=None, dest=None):
         # We only care if floating_addresses are provided and we're
         # switching hosts
-        if not floating_addresses or source == dest:
+        if not floating_addresses or (source and source == dest):
             return
 
         LOG.info(_("Starting migration network for instance"
@@ -698,11 +705,15 @@ class FloatingIP(object):
                                        {'host': None})
 
     @wrap_check_policy
-    def migrate_instance_finish(self, context, instance_uuid, rxtx_factor,
-                                project_id, source, dest, floating_addresses):
+    def migrate_instance_finish(self, context, instance_uuid,
+                                floating_addresses, host=None,
+                                rxtx_factor=None, project_id=None,
+                                source=None, dest=None):
         # We only care if floating_addresses are provided and we're
         # switching hosts
-        if not floating_addresses or source == dest:
+        if host and not dest:
+            dest = host
+        if not floating_addresses or (source and source == dest):
             return
 
         LOG.info(_("Finishing migration network for instance"
@@ -1285,6 +1296,10 @@ class NetworkManager(manager.SchedulerDependentManager):
             network = self._get_network_by_id(context, network_id)
         self._allocate_fixed_ips(context, instance_id, host, [network])
 
+    def get_backdoor_port(self, context):
+        """Return backdoor port for eventlet_backdoor"""
+        return self.backdoor_port
+
     @wrap_check_policy
     def remove_fixed_ip_from_instance(self, context, instance_id, host,
                                       address):
@@ -1376,6 +1391,10 @@ class NetworkManager(manager.SchedulerDependentManager):
                 self.instance_dns_manager.delete_entry(n,
                                                       self.instance_dns_domain)
 
+        self.db.fixed_ip_update(context, address,
+                                {'allocated': False,
+                                 'virtual_interface_id': None})
+
         if teardown:
             network = self._get_network_by_id(context,
                                               fixed_ip_ref['network_id'])
@@ -1401,10 +1420,6 @@ class NetworkManager(manager.SchedulerDependentManager):
                 # NOTE(vish): This forces a packet so that the release_fixed_ip
                 #             callback will get called by nova-dhcpbridge.
                 self.driver.release_dhcp(dev, address, vif['address'])
-
-        self.db.fixed_ip_update(context, address,
-                                {'allocated': False,
-                                 'virtual_interface_id': None})
 
     def lease_fixed_ip(self, context, address):
         """Called by dhcp-bridge when ip is leased."""
@@ -1954,12 +1969,16 @@ class FlatManager(NetworkManager):
         """Returns the floating IPs associated with a fixed_address"""
         return []
 
-    def migrate_instance_start(self, context, instance_uuid, rxtx_factor,
-                               project_id, source, dest, floating_addresses):
+    def migrate_instance_start(self, context, instance_uuid,
+                               floating_addresses,
+                               rxtx_factor=None, project_id=None,
+                               source=None, dest=None):
         pass
 
-    def migrate_instance_finish(self, context, instance_uuid, rxtx_factor,
-                                project_id, source, dest, floating_addresses):
+    def migrate_instance_finish(self, context, instance_uuid,
+                                floating_addresses, host=None,
+                                rxtx_factor=None, project_id=None,
+                                source=None, dest=None):
         pass
 
 

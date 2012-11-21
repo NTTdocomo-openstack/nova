@@ -24,10 +24,8 @@ Handles all requests relating to volumes + cinder.
 from cinderclient import service_catalog
 from cinderclient.v1 import client as cinder_client
 
-from nova import config
 from nova.db import base
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 
@@ -43,7 +41,7 @@ cinder_opts = [
                     'endpoint e.g. http://localhost:8776/v1/%(project_id)s'),
 ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(cinder_opts)
 
 LOG = logging.getLogger(__name__)

@@ -19,7 +19,6 @@ import webob
 from nova.api.openstack.compute.contrib import volumes
 from nova import context
 from nova import exception
-from nova import flags
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils

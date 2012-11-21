@@ -26,7 +26,6 @@ from xml.dom import minidom
 
 from nova.api.ec2 import ec2utils
 from nova import exception
-from nova import flags
 from nova.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)

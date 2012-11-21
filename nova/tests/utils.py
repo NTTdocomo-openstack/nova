@@ -16,13 +16,13 @@
 
 import platform
 
-import nova.config
 import nova.context
 import nova.db
-import nova.flags
 from nova.image import glance
+from nova.openstack.common import cfg
 
-CONF = nova.config.CONF
+CONF = cfg.CONF
+CONF.import_opt('use_ipv6', 'nova.config')
 
 
 def get_test_admin_context():

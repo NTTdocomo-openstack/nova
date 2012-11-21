@@ -20,9 +20,7 @@
 import os
 import time
 
-from nova import config
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
@@ -45,7 +43,7 @@ volume_opts = [
                     'volumes')
     ]
 
-CONF = config.CONF
+CONF = cfg.CONF
 CONF.register_opts(volume_opts)
 
 

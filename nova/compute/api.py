@@ -36,15 +36,14 @@ from nova.compute import rpcapi as compute_rpcapi
 from nova.compute import task_states
 from nova.compute import utils as compute_utils
 from nova.compute import vm_states
-from nova import config
 from nova.consoleauth import rpcapi as consoleauth_rpcapi
 from nova import crypto
 from nova.db import base
 from nova import exception
-from nova import flags
 from nova.image import glance
 from nova import network
 from nova import notifications
+from nova.openstack.common import cfg
 from nova.openstack.common import excutils
 from nova.openstack.common import importutils
 from nova.openstack.common import jsonutils
@@ -60,7 +59,13 @@ from nova import volume
 
 LOG = logging.getLogger(__name__)
 
-CONF = config.CONF
+CONF = cfg.CONF
+CONF.import_opt('allow_resize_to_same_host', 'nova.config')
+CONF.import_opt('compute_topic', 'nova.config')
+CONF.import_opt('default_schedule_zone', 'nova.config')
+CONF.import_opt('non_inheritable_image_properties', 'nova.config')
+CONF.import_opt('null_kernel', 'nova.config')
+CONF.import_opt('security_group_handler', 'nova.config')
 CONF.import_opt('consoleauth_topic', 'nova.consoleauth')
 
 MAX_USERDATA_SIZE = 65535
@@ -732,6 +737,10 @@ class API(base.Base):
         self._populate_instance_shutdown_terminate(instance, image,
                                                    block_device_mapping)
 
+        # ensure_default security group is called before the instance
+        # is created so the creation of the default security group is
+        # proxied to the sgh.
+        self.security_group_api.ensure_default(context)
         instance = self.db.instance_create(context, instance)
 
         self._populate_instance_for_bdm(context, instance,
@@ -1542,10 +1551,13 @@ class API(base.Base):
         # system metadata... and copy in the properties for the new image.
         orig_sys_metadata = _reset_image_metadata()
 
+        bdms = self.db.block_device_mapping_get_all_by_instance(context,
+                instance['uuid'])
+
         self.compute_rpcapi.rebuild_instance(context, instance=instance,
                 new_pass=admin_password, injected_files=files_to_inject,
                 image_ref=image_href, orig_image_ref=orig_image_ref,
-                orig_sys_metadata=orig_sys_metadata)
+                orig_sys_metadata=orig_sys_metadata, bdms=bdms)
 
     @wrap_check_policy
     @check_instance_lock
@@ -1564,12 +1576,12 @@ class API(base.Base):
                                task_state=task_states.RESIZE_REVERTING,
                                expected_task_state=None)
 
+        self.db.migration_update(elevated, migration_ref['id'],
+                                 {'status': 'reverting'})
+
         self.compute_rpcapi.revert_resize(context,
                 instance=instance, migration=migration_ref,
                 host=migration_ref['dest_compute'], reservations=reservations)
-
-        self.db.migration_update(elevated, migration_ref['id'],
-                                 {'status': 'reverted'})
 
     @wrap_check_policy
     @check_instance_lock
@@ -1588,13 +1600,13 @@ class API(base.Base):
                                task_state=None,
                                expected_task_state=None)
 
+        self.db.migration_update(elevated, migration_ref['id'],
+                {'status': 'confirming'})
+
         self.compute_rpcapi.confirm_resize(context,
                 instance=instance, migration=migration_ref,
                 host=migration_ref['source_compute'],
                 reservations=reservations)
-
-        self.db.migration_update(elevated, migration_ref['id'],
-                {'status': 'confirmed'})
 
     @staticmethod
     def _resize_quota_delta(context, new_instance_type,
@@ -1804,6 +1816,10 @@ class API(base.Base):
     def get_diagnostics(self, context, instance):
         """Retrieve diagnostics for the given instance."""
         return self.compute_rpcapi.get_diagnostics(context, instance=instance)
+
+    def get_backdoor_port(self, context, host):
+        """Retrieve backdoor port"""
+        return self.compute_rpcapi.get_backdoor_port(context, host)
 
     @wrap_check_policy
     @check_instance_lock

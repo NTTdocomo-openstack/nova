@@ -23,7 +23,7 @@ from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
 from nova import db
 from nova import exception
-from nova import flags
+from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils
 from nova import utils
@@ -31,7 +31,8 @@ from nova import utils
 
 LOG = logging.getLogger(__name__)
 authorize = extensions.extension_authorizer('compute', 'services')
-FLAGS = flags.FLAGS
+CONF = cfg.CONF
+CONF.import_opt('service_down_time', 'nova.config')
 
 
 class ServicesIndexTemplate(xmlutil.TemplateBuilder):
@@ -83,7 +84,7 @@ class ServiceController(object):
         svcs = []
         for svc in services:
             delta = now - (svc['updated_at'] or svc['created_at'])
-            alive = abs(utils.total_seconds(delta)) <= FLAGS.service_down_time
+            alive = abs(utils.total_seconds(delta)) <= CONF.service_down_time
             art = (alive and "up") or "down"
             active = 'enabled'
             if svc['disabled']:

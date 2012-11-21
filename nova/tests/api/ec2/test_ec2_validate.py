@@ -21,11 +21,10 @@ import datetime
 from nova.api.ec2 import cloud
 from nova.api.ec2 import ec2utils
 from nova.compute import utils as compute_utils
-from nova import config
 from nova import context
 from nova import db
 from nova import exception
-from nova import flags
+from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova.openstack.common import rpc
 from nova.openstack.common import timeutils
@@ -33,7 +32,7 @@ from nova import test
 from nova.tests import fake_network
 from nova.tests.image import fake
 
-CONF = config.CONF
+CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
 
 
