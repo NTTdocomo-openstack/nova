@@ -187,7 +187,7 @@ class FakeDriver(driver.ComputeDriver):
     def suspend(self, instance):
         pass
 
-    def resume(self, instance):
+    def resume(self, instance, network_info, block_device_info=None):
         pass
 
     def destroy(self, instance, network_info, block_device_info=None):
@@ -195,8 +195,9 @@ class FakeDriver(driver.ComputeDriver):
         if key in self.instances:
             del self.instances[key]
         else:
-            LOG.warning("Key '%s' not in instances '%s'" %
-                        (key, self.instances), instance=instance)
+            LOG.warning(_("Key '%(key)s' not in instances '%(inst)s'") %
+                        {'key': key,
+                         'inst': self.instances}, instance=instance)
 
     def attach_volume(self, connection_info, instance_name, mountpoint):
         """Attach the disk to the instance at mountpoint using info"""

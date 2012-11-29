@@ -35,7 +35,6 @@ from xml.parsers import expat
 from eventlet import greenthread
 
 from nova import block_device
-from nova.compute import instance_types
 from nova.compute import power_state
 from nova import exception
 from nova.image import glance
@@ -44,6 +43,7 @@ from nova.openstack.common import excutils
 from nova.openstack.common import log as logging
 from nova import utils
 from nova.virt.disk import api as disk
+from nova.virt.disk.vfs import localfs as vfsimpl
 from nova.virt import driver
 from nova.virt.xenapi import agent
 from nova.virt.xenapi import volume_utils
@@ -203,8 +203,7 @@ def create_vm(session, instance, name_label, kernel, ramdisk,
 
         3. Using hardware virtualization
     """
-    inst_type_id = instance['instance_type_id']
-    instance_type = instance_types.get_instance_type(inst_type_id)
+    instance_type = instance['instance_type']
     mem = str(long(instance_type['memory_mb']) * 1024 * 1024)
     vcpus = str(instance_type['vcpus'])
 
@@ -319,7 +318,7 @@ def _is_vm_shutdown(session, vm_ref):
 
 def ensure_free_mem(session, instance):
     inst_type_id = instance['instance_type_id']
-    instance_type = instance_types.get_instance_type(inst_type_id)
+    instance_type = instance['instance_type']
     mem = long(instance_type['memory_mb']) * 1024 * 1024
     host = session.get_xenapi_host()
     host_free_mem = long(session.call_xenapi("host.compute_free_memory",
@@ -1138,8 +1137,7 @@ def _check_vdi_size(context, session, instance, vdi_uuid):
 
     # FIXME(jk0): this was copied directly from compute.manager.py, let's
     # refactor this to a common area
-    instance_type_id = instance['instance_type_id']
-    instance_type = instance_types.get_instance_type(instance_type_id)
+    instance_type = instance['instance_type']
     allowed_size_gb = instance_type['root_gb']
     allowed_size_bytes = allowed_size_gb * 1024 * 1024 * 1024
 
@@ -2106,11 +2104,14 @@ def _mounted_processing(device, key, net, metadata):
             try:
                 # This try block ensures that the umount occurs
                 if not agent.find_guest_agent(tmpdir):
+                    vfs = vfsimpl.VFSLocalFS(imgfile=None,
+                                             imgfmt=None,
+                                             imgdir=tmpdir)
                     LOG.info(_('Manipulating interface files directly'))
                     # for xenapi, we don't 'inject' admin_password here,
                     # it's handled at instance startup time, nor do we
                     # support injecting arbitrary files here.
-                    disk.inject_data_into_fs(tmpdir,
+                    disk.inject_data_into_fs(vfs,
                                              key, net, metadata, None, None)
             finally:
                 utils.execute('umount', dev_path, run_as_root=True)

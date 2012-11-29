@@ -53,19 +53,39 @@ from nova.openstack.common import uuidutils
 import nova.policy
 from nova import quota
 from nova.scheduler import rpcapi as scheduler_rpcapi
+from nova import servicegroup
 from nova import utils
 from nova import volume
 
 
 LOG = logging.getLogger(__name__)
 
+compute_opts = [
+    cfg.BoolOpt('allow_resize_to_same_host',
+                default=False,
+                help='Allow destination machine to match source for resize. '
+                     'Useful when testing in single-host environments.'),
+    cfg.StrOpt('default_schedule_zone',
+               default=None,
+               help='availability zone to use when user doesn\'t specify one'),
+    cfg.ListOpt('non_inheritable_image_properties',
+                default=['cache_in_nova',
+                         'bittorrent'],
+                help='These are image properties which a snapshot should not'
+                     ' inherit from an instance'),
+    cfg.StrOpt('null_kernel',
+               default='nokernel',
+               help='kernel image that indicates not to use a kernel, but to '
+                    'use a raw disk image instead'),
+    cfg.StrOpt('security_group_handler',
+               default='nova.network.sg.NullSecurityGroupHandler',
+               help='The full class name of the security group handler class'),
+]
+
+
 CONF = cfg.CONF
-CONF.import_opt('allow_resize_to_same_host', 'nova.config')
+CONF.register_opts(compute_opts)
 CONF.import_opt('compute_topic', 'nova.config')
-CONF.import_opt('default_schedule_zone', 'nova.config')
-CONF.import_opt('non_inheritable_image_properties', 'nova.config')
-CONF.import_opt('null_kernel', 'nova.config')
-CONF.import_opt('security_group_handler', 'nova.config')
 CONF.import_opt('consoleauth_topic', 'nova.consoleauth')
 
 MAX_USERDATA_SIZE = 65535
@@ -149,6 +169,8 @@ class API(base.Base):
         self.consoleauth_rpcapi = consoleauth_rpcapi.ConsoleAuthAPI()
         self.scheduler_rpcapi = scheduler_rpcapi.SchedulerAPI()
         self.compute_rpcapi = compute_rpcapi.ComputeAPI()
+        self.servicegroup_api = servicegroup.API()
+
         super(API, self).__init__(**kwargs)
 
     def _instance_update(self, context, instance_uuid, **kwargs):
@@ -689,7 +711,6 @@ class API(base.Base):
         instance['launch_index'] = 0
         instance['vm_state'] = vm_states.BUILDING
         instance['task_state'] = task_states.SCHEDULING
-        instance['architecture'] = image['properties'].get('architecture')
         instance['info_cache'] = {'network_info': '[]'}
 
         # Store image properties so we can use them later
@@ -912,7 +933,7 @@ class API(base.Base):
             except exception.ComputeHostNotFound:
                 services = []
             for service in services:
-                if utils.service_is_up(service):
+                if self.servicegroup_api.service_is_up(service):
                     is_up = True
                     cb(context, instance, bdms)
                     break
@@ -1122,17 +1143,17 @@ class API(base.Base):
         if search_opts is None:
             search_opts = {}
 
+        if 'all_tenants' in search_opts:
+            check_policy(context, "get_all_tenants", target)
+
         LOG.debug(_("Searching by: %s") % str(search_opts))
 
         # Fixups for the DB call
         filters = {}
 
         def _remap_flavor_filter(flavor_id):
-            try:
-                instance_type = instance_types.get_instance_type_by_flavor_id(
-                        flavor_id)
-            except exception.FlavorNotFound:
-                raise ValueError()
+            instance_type = instance_types.get_instance_type_by_flavor_id(
+                    flavor_id)
 
             filters['instance_type_id'] = instance_type['id']
 

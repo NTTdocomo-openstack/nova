@@ -37,6 +37,7 @@ from nova.tests import matchers
 from nova import volume
 
 CONF = cfg.CONF
+CONF.import_opt('compute_driver', 'nova.virt.driver')
 CONF.import_opt('default_instance_type', 'nova.config')
 CONF.import_opt('use_ipv6', 'nova.config')
 LOG = logging.getLogger(__name__)
@@ -117,6 +118,9 @@ class CinderCloudTestCase(test.TestCase):
         # set up our cloud
         self.cloud = cloud.CloudController()
         self.flags(scheduler_driver='nova.scheduler.chance.ChanceScheduler')
+
+        # Short-circuit the conductor service
+        self.flags(use_local=True, group='conductor')
 
         # set up services
         self.compute = self.start_service('compute')

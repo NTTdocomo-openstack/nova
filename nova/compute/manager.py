@@ -29,8 +29,6 @@ terminating it.
 
 :instances_path:  Where instances are kept on disk
 :base_dir_name:  Where cached images are stored under instances_path
-:compute_driver:  Name of class that is used to handle virtualization, loaded
-                  by :func:`nova.openstack.common.importutils.import_object`
 
 """
 
@@ -53,6 +51,7 @@ from nova.compute import rpcapi as compute_rpcapi
 from nova.compute import task_states
 from nova.compute import utils as compute_utils
 from nova.compute import vm_states
+from nova import conductor
 import nova.context
 from nova import exception
 from nova.image import glance
@@ -79,9 +78,6 @@ from nova import volume
 
 
 compute_opts = [
-    cfg.StrOpt('instances_path',
-               default='$state_path/instances',
-               help='where instances are stored on disk'),
     cfg.StrOpt('base_dir_name',
                default='_base',
                help="Where cached images are stored under $instances_path."
@@ -91,9 +87,53 @@ compute_opts = [
                default=socket.getfqdn(),
                help='Console proxy host to use to connect '
                     'to instances on this host.'),
+    cfg.StrOpt('default_access_ip_network_name',
+               default=None,
+               help='Name of network to use to set access ips for instances'),
+    cfg.BoolOpt('defer_iptables_apply',
+                default=False,
+                help='Whether to batch up the application of IPTables rules'
+                     ' during a host restart and apply all at the end of the'
+                     ' init phase'),
+    cfg.StrOpt('instances_path',
+               default='$state_path/instances',
+               help='where instances are stored on disk'),
+    cfg.BoolOpt('instance_usage_audit',
+               default=False,
+               help="Generate periodic compute.instance.exists notifications"),
     cfg.IntOpt('live_migration_retry_count',
                default=30,
                help="Number of 1 second retries needed in live_migration"),
+    cfg.BoolOpt('resume_guests_state_on_host_boot',
+                default=False,
+                help='Whether to start guests that were running before the '
+                     'host rebooted'),
+    cfg.BoolOpt('start_guests_on_host_boot',
+                default=False,
+                help='Whether to restart guests when the host reboots'),
+    ]
+
+interval_opts = [
+    cfg.IntOpt('bandwidth_poll_interval',
+               default=600,
+               help='interval to pull bandwidth usage info'),
+    cfg.IntOpt("heal_instance_info_cache_interval",
+               default=60,
+               help="Number of seconds between instance info_cache self "
+                        "healing updates"),
+    cfg.IntOpt('host_state_interval',
+               default=120,
+               help='Interval in seconds for querying the host status'),
+    cfg.IntOpt("image_cache_manager_interval",
+               default=40,
+               help="Number of periodic scheduler ticks to wait between "
+                    "runs of the image cache manager."),
+    cfg.IntOpt('reclaim_instance_interval',
+               default=0,
+               help='Interval in seconds for reclaiming deleted instances'),
+]
+
+timeout_opts = [
     cfg.IntOpt("reboot_timeout",
                default=0,
                help="Automatically hard reboot an instance if it has been "
@@ -112,50 +152,36 @@ compute_opts = [
                default=0,
                help="Automatically confirm resizes after N seconds. "
                     "Set to 0 to disable."),
-    cfg.IntOpt('host_state_interval',
-               default=120,
-               help='Interval in seconds for querying the host status'),
-    cfg.IntOpt("running_deleted_instance_timeout",
-               default=0,
-               help="Number of seconds after being deleted when a running "
-                    "instance should be considered eligible for cleanup."),
-    cfg.IntOpt("running_deleted_instance_poll_interval",
-               default=30,
-               help="Number of periodic scheduler ticks to wait between "
-                    "runs of the cleanup task."),
+]
+
+running_deleted_opts = [
     cfg.StrOpt("running_deleted_instance_action",
                default="log",
                help="Action to take if a running deleted instance is detected."
                     "Valid options are 'noop', 'log' and 'reap'. "
                     "Set to 'noop' to disable."),
-    cfg.IntOpt("image_cache_manager_interval",
-               default=40,
+    cfg.IntOpt("running_deleted_instance_poll_interval",
+               default=30,
                help="Number of periodic scheduler ticks to wait between "
-                    "runs of the image cache manager."),
-    cfg.IntOpt("heal_instance_info_cache_interval",
-               default=60,
-               help="Number of seconds between instance info_cache self "
-                        "healing updates"),
-    cfg.BoolOpt('instance_usage_audit',
-               default=False,
-               help="Generate periodic compute.instance.exists notifications"),
-    ]
+                    "runs of the cleanup task."),
+    cfg.IntOpt("running_deleted_instance_timeout",
+               default=0,
+               help="Number of seconds after being deleted when a running "
+                    "instance should be considered eligible for cleanup."),
+]
 
 CONF = cfg.CONF
 CONF.register_opts(compute_opts)
-CONF.import_opt('allow_resize_to_same_host', 'nova.config')
-CONF.import_opt('bandwidth_poll_interval', 'nova.config')
-CONF.import_opt('compute_driver', 'nova.config')
+CONF.register_opts(interval_opts)
+CONF.register_opts(timeout_opts)
+CONF.register_opts(running_deleted_opts)
+CONF.import_opt('allow_resize_to_same_host', 'nova.compute.api')
 CONF.import_opt('console_topic', 'nova.config')
-CONF.import_opt('default_access_ip_network_name', 'nova.config')
-CONF.import_opt('defer_iptables_apply', 'nova.config')
 CONF.import_opt('host', 'nova.config')
 CONF.import_opt('my_ip', 'nova.config')
 CONF.import_opt('network_manager', 'nova.config')
 CONF.import_opt('password_length', 'nova.config')
 CONF.import_opt('reclaim_instance_interval', 'nova.config')
-CONF.import_opt('resume_guests_state_on_host_boot', 'nova.config')
-CONF.import_opt('start_guests_on_host_boot', 'nova.config')
 CONF.import_opt('vpn_image_id', 'nova.config')
 CONF.import_opt('my_ip', 'nova.config')
 CONF.import_opt('state_path', 'nova.config')
@@ -233,9 +259,9 @@ class ComputeVirtAPI(virtapi.VirtAPI):
         self._compute = compute
 
     def instance_update(self, context, instance_uuid, updates):
-        return self._compute.db.instance_update_and_get_original(context,
-                                                                 instance_uuid,
-                                                                 updates)
+        return self._compute._instance_update(context,
+                                              instance_uuid,
+                                              **updates)
 
     def instance_get_by_uuid(self, context, instance_uuid):
         return self._compute.db.instance_get_by_uuid(context, instance_uuid)
@@ -281,31 +307,12 @@ class ComputeVirtAPI(virtapi.VirtAPI):
 class ComputeManager(manager.SchedulerDependentManager):
     """Manages the running instances from creation to destruction."""
 
-    RPC_API_VERSION = '2.18'
+    RPC_API_VERSION = '2.19'
 
     def __init__(self, compute_driver=None, *args, **kwargs):
         """Load configuration options and connect to the hypervisor."""
-        # TODO(vish): sync driver creation logic with the rest of the system
-        #             and re-document the module docstring
-        if not compute_driver:
-            compute_driver = CONF.compute_driver
-
-        if not compute_driver:
-            LOG.error(_("Compute driver option required, but not specified"))
-            sys.exit(1)
-
         self.virtapi = ComputeVirtAPI(self)
-
-        LOG.info(_("Loading compute driver '%s'") % compute_driver)
-        try:
-            self.driver = utils.check_isinstance(
-                    importutils.import_object_ns('nova.virt', compute_driver,
-                                                 self.virtapi),
-                    driver.ComputeDriver)
-        except ImportError as e:
-            LOG.error(_("Unable to load the virtualization driver: %s") % (e))
-            sys.exit(1)
-
+        self.driver = driver.load_compute_driver(self.virtapi, compute_driver)
         self.network_api = network.API()
         self.volume_api = volume.API()
         self.network_manager = importutils.import_object(
@@ -316,6 +323,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         self.compute_api = compute.API()
         self.compute_rpcapi = compute_rpcapi.ComputeAPI()
         self.scheduler_rpcapi = scheduler_rpcapi.SchedulerAPI()
+        self.conductor_api = conductor.API()
 
         super(ComputeManager, self).__init__(service_name="compute",
                                              *args, **kwargs)
@@ -334,11 +342,11 @@ class ComputeManager(manager.SchedulerDependentManager):
     def _instance_update(self, context, instance_uuid, **kwargs):
         """Update an instance in the database using kwargs as value."""
 
-        (old_ref, instance_ref) = self.db.instance_update_and_get_original(
-                context, instance_uuid, kwargs)
+        instance_ref = self.conductor_api.instance_update(context,
+                                                          instance_uuid,
+                                                          **kwargs)
         rt = self._get_resource_tracker(instance_ref.get('node'))
         rt.update_usage(context, instance_ref)
-        notifications.send_update(context, old_ref, instance_ref)
 
         return instance_ref
 
@@ -570,13 +578,19 @@ class ComputeManager(manager.SchedulerDependentManager):
 
     def _run_instance(self, context, request_spec,
                       filter_properties, requested_networks, injected_files,
-                      admin_password, is_first_time, instance):
+                      admin_password, is_first_time, node, instance):
         """Launch a new instance with specified options."""
         context = context.elevated()
 
         try:
             self._check_instance_not_already_created(context, instance)
             image_meta = self._check_image_size(context, instance)
+
+            if node is None:
+                node = self.driver.get_available_nodes()[0]
+                LOG.debug(_("No node specified, defaulting to %(node)s") %
+                          locals())
+
             extra_usage_info = {"image_name": image_meta['name']}
             self._start_building(context, instance)
             self._notify_about_instance_usage(
@@ -585,7 +599,7 @@ class ComputeManager(manager.SchedulerDependentManager):
             network_info = None
             bdms = self.db.block_device_mapping_get_all_by_instance(
                         context, instance['uuid'])
-            rt = self._get_resource_tracker(instance.get('node'))
+            rt = self._get_resource_tracker(node)
             try:
                 limits = filter_properties.get('limits', {})
                 with rt.instance_claim(context, instance, limits):
@@ -735,8 +749,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                     if ip['version'] == 6:
                         update_info['access_ip_v6'] = ip['address']
         if update_info:
-            self.db.instance_update(context, instance['uuid'], update_info)
-            notifications.send_update(context, instance, instance)
+            self._instance_update(context, instance['uuid'], **update_info)
 
     def _check_instance_not_already_created(self, context, instance):
         """Ensure an instance with the same name is not already present."""
@@ -935,7 +948,7 @@ class ComputeManager(manager.SchedulerDependentManager):
     def run_instance(self, context, instance, request_spec=None,
                      filter_properties=None, requested_networks=None,
                      injected_files=None, admin_password=None,
-                     is_first_time=False):
+                     is_first_time=False, node=None):
 
         if filter_properties is None:
             filter_properties = {}
@@ -946,7 +959,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         def do_run_instance():
             self._run_instance(context, request_spec,
                     filter_properties, requested_networks, injected_files,
-                    admin_password, is_first_time, instance)
+                    admin_password, is_first_time, node, instance)
         do_run_instance()
 
     def _shutdown_instance(self, context, instance, bdms):
@@ -1762,6 +1775,11 @@ class ComputeManager(manager.SchedulerDependentManager):
         if not filter_properties:
             filter_properties = {}
 
+        if not instance['host']:
+            self._set_instance_error_state(context, instance['uuid'])
+            msg = _('Instance has no source host')
+            raise exception.MigrationError(msg)
+
         same_host = instance['host'] == self.host
         if same_host and not CONF.allow_resize_to_same_host:
             self._set_instance_error_state(context, instance['uuid'])
@@ -1855,9 +1873,8 @@ class ComputeManager(manager.SchedulerDependentManager):
                         reservations=None, migration=None, migration_id=None,
                         instance_type=None):
         """Starts the migration of a running instance to another host."""
-        elevated = context.elevated()
         if not migration:
-            migration = self.db.migration_get(elevated, migration_id)
+            migration = self.db.migration_get(context.elevated(), migration_id)
         with self._error_out_instance_on_exception(context, instance['uuid'],
                                                    reservations):
             if not instance_type:
@@ -1866,9 +1883,8 @@ class ComputeManager(manager.SchedulerDependentManager):
 
             network_info = self._get_instance_nw_info(context, instance)
 
-            self.db.migration_update(elevated,
-                                     migration['id'],
-                                     {'status': 'migrating'})
+            migration = self.conductor_api.migration_update(context,
+                    migration, 'migrating')
 
             instance = self._instance_update(context, instance['uuid'],
                     task_state=task_states.RESIZE_MIGRATING,
@@ -1890,9 +1906,8 @@ class ComputeManager(manager.SchedulerDependentManager):
             self.network_api.migrate_instance_start(context, instance,
                                                     migration)
 
-            migration = self.db.migration_update(elevated,
-                                                 migration['id'],
-                                                 {'status': 'post-migrating'})
+            migration = self.conductor_api.migration_update(context,
+                    migration, 'post-migrating')
 
             instance = self._instance_update(context, instance['uuid'],
                     host=migration['dest_compute'],
@@ -1976,8 +1991,8 @@ class ComputeManager(manager.SchedulerDependentManager):
                                          expected_task_state=task_states.
                                              RESIZE_FINISH)
 
-        self.db.migration_update(context.elevated(), migration['id'],
-                                 {'status': 'finished'})
+        migration = self.conductor_api.migration_update(context,
+                migration, 'finished')
 
         self._notify_about_instance_usage(
             context, instance, "finish_resize.end",
@@ -2148,7 +2163,13 @@ class ComputeManager(manager.SchedulerDependentManager):
         """Resume the given suspended instance."""
         context = context.elevated()
         LOG.audit(_('Resuming'), context=context, instance=instance)
-        self.driver.resume(instance)
+
+        network_info = self._get_instance_nw_info(context, instance)
+        block_device_info = self._get_instance_volume_block_device_info(
+                            context, instance['uuid'])
+
+        self.driver.resume(instance, self._legacy_nw_info(network_info),
+                           block_device_info)
 
         current_power_state = self._get_power_state(context, instance)
         self._instance_update(context,
@@ -2777,12 +2798,13 @@ class ComputeManager(manager.SchedulerDependentManager):
                            "older than %(confirm_window)d seconds"),
                          migrations_info)
 
-            def _set_migration_to_error(migration_id, reason, **kwargs):
+            def _set_migration_to_error(migration, reason, **kwargs):
+                migration_id = migration['id']
                 msg = _("Setting migration %(migration_id)s to error: "
                        "%(reason)s") % locals()
                 LOG.warn(msg, **kwargs)
-                self.db.migration_update(context, migration_id,
-                                        {'status': 'error'})
+                self.conductor_api.migration_update(context, migration,
+                                                    'error')
 
             for migration in migrations:
                 migration_id = migration['id']
@@ -2795,11 +2817,11 @@ class ComputeManager(manager.SchedulerDependentManager):
                                                             instance_uuid)
                 except exception.InstanceNotFound:
                     reason = _("Instance %(instance_uuid)s not found")
-                    _set_migration_to_error(migration_id, reason % locals())
+                    _set_migration_to_error(migration, reason % locals())
                     continue
                 if instance['vm_state'] == vm_states.ERROR:
                     reason = _("In ERROR state")
-                    _set_migration_to_error(migration_id, reason % locals(),
+                    _set_migration_to_error(migration, reason % locals(),
                                             instance=instance)
                     continue
                 vm_state = instance['vm_state']
@@ -2807,7 +2829,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                 if vm_state != vm_states.RESIZED or task_state is not None:
                     reason = _("In states %(vm_state)s/%(task_state)s, not"
                             "RESIZED/None")
-                    _set_migration_to_error(migration_id, reason % locals(),
+                    _set_migration_to_error(migration, reason % locals(),
                                             instance=instance)
                     continue
                 try:

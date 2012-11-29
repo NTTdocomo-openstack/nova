@@ -49,6 +49,7 @@ from nova.virt import fake as fake_virt
 from nova import volume
 
 CONF = cfg.CONF
+CONF.import_opt('compute_driver', 'nova.virt.driver')
 CONF.import_opt('default_image', 'nova.config')
 CONF.import_opt('default_instance_type', 'nova.config')
 CONF.import_opt('use_ipv6', 'nova.config')
@@ -129,6 +130,9 @@ class CloudTestCase(test.TestCase):
         # set up our cloud
         self.cloud = cloud.CloudController()
         self.flags(scheduler_driver='nova.scheduler.chance.ChanceScheduler')
+
+        # Short-circuit the conductor service
+        self.flags(use_local=True, group='conductor')
 
         # set up services
         self.compute = self.start_service('compute')
@@ -301,6 +305,18 @@ class CloudTestCase(test.TestCase):
         self.assertRaises(exception.EC2APIError,
                           self.cloud.disassociate_address,
                           self.context, public_ip=address)
+
+    def test_disassociate_unassociated_address(self):
+        address = "10.10.10.10"
+        db.floating_ip_create(self.context,
+                              {'address': address,
+                               'pool': 'nova'})
+        self.cloud.allocate_address(self.context)
+        self.cloud.describe_addresses(self.context)
+        self.assertRaises(exception.InstanceNotFound,
+                          self.cloud.disassociate_address,
+                          self.context, public_ip=address)
+        db.floating_ip_destroy(self.context, address)
 
     def test_describe_security_groups(self):
         """Makes sure describe_security_groups works and filters results."""

@@ -180,6 +180,9 @@ libvirt_opts = [
                default='$instances_path/snapshots',
                help='Location where libvirt driver will store snapshots '
                     'before uploading them to image service'),
+    cfg.StrOpt('xen_hvmloader_path',
+                default='/usr/lib/xen/boot/hvmloader',
+                help='Location where the Xen hvmloader is kept'),
     ]
 
 CONF = cfg.CONF
@@ -194,6 +197,8 @@ CONF.import_opt('vncserver_proxyclient_address', 'nova.vnc')
 DEFAULT_FIREWALL_DRIVER = "%s.%s" % (
     libvirt_firewall.__name__,
     libvirt_firewall.IptablesFirewallDriver.__name__)
+
+MAX_CONSOLE_BYTES = 102400
 
 
 def patch_tpool_proxy():
@@ -998,10 +1003,12 @@ class LibvirtDriver(driver.ComputeDriver):
         dom.managedSave(0)
 
     @exception.wrap_exception()
-    def resume(self, instance):
+    def resume(self, instance, network_info, block_device_info=None):
         """resume the specified instance"""
-        dom = self._lookup_by_name(instance['name'])
-        self._create_domain(domain=dom)
+        xml = self._get_domain_xml(instance, network_info,
+                                   block_device_info=None)
+        self._create_domain_and_network(xml, instance, network_info,
+                                        block_device_info)
 
     @exception.wrap_exception()
     def resume_state_on_host_boot(self, context, instance, network_info,
@@ -1145,7 +1152,14 @@ class LibvirtDriver(driver.ComputeDriver):
                 if not path:
                     continue
                 libvirt_utils.chown(path, os.getuid())
-                return libvirt_utils.load_file(path)
+
+                with libvirt_utils.file_open(path, 'rb') as fp:
+                    log_data, remaining = utils.last_bytes(fp,
+                                                           MAX_CONSOLE_BYTES)
+                    if remaining > 0:
+                        LOG.info(_('Truncated console log returned, %d bytes '
+                                   'ignored'), remaining, instance=instance)
+                    return log_data
 
         # Try 'pty' types
         if console_types.get('pty'):
@@ -1166,7 +1180,12 @@ class LibvirtDriver(driver.ComputeDriver):
         console_log = self._get_console_log_path(instance['name'])
         fpath = self._append_to_file(data, console_log)
 
-        return libvirt_utils.load_file(fpath)
+        with libvirt_utils.file_open(fpath, 'rb') as fp:
+            log_data, remaining = utils.last_bytes(fp, MAX_CONSOLE_BYTES)
+            if remaining > 0:
+                LOG.info(_('Truncated console log returned, %d bytes ignored'),
+                         remaining, instance=instance)
+            return log_data
 
     @staticmethod
     def get_host_ip_addr():
@@ -1721,7 +1740,7 @@ class LibvirtDriver(driver.ComputeDriver):
                 guest.os_type = vm_mode.HVM
 
         if CONF.libvirt_type == "xen" and guest.os_type == vm_mode.HVM:
-            guest.os_loader = '/usr/lib/xen/boot/hvmloader'
+            guest.os_loader = CONF.xen_hvmloader_path
 
         if CONF.libvirt_type == "lxc":
             guest.os_type = vm_mode.EXE

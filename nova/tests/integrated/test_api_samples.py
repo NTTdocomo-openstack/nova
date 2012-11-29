@@ -39,7 +39,7 @@ from nova.tests.image import fake
 from nova.tests.integrated import integrated_helpers
 
 CONF = cfg.CONF
-CONF.import_opt('allow_resize_to_same_host', 'nova.config')
+CONF.import_opt('allow_resize_to_same_host', 'nova.compute.api')
 CONF.import_opt('osapi_compute_extension', 'nova.config')
 CONF.import_opt('vpn_image_id', 'nova.config')
 LOG = logging.getLogger(__name__)
@@ -941,6 +941,80 @@ class FloatingIpsJsonTest(ApiSampleTestBase):
 
 
 class FloatingIpsXmlTest(FloatingIpsJsonTest):
+    ctype = 'xml'
+
+
+class FloatingIpsBulkJsonTest(ApiSampleTestBase):
+    extension_name = "nova.api.openstack.compute.contrib." \
+        "floating_ips_bulk.Floating_ips_bulk"
+
+    def setUp(self):
+        super(FloatingIpsBulkJsonTest, self).setUp()
+        pool = CONF.default_floating_pool
+        interface = CONF.public_interface
+
+        self.ip_pool = [
+            {
+                'address': "10.10.10.1",
+                'pool': pool,
+                'interface': interface
+                },
+            {
+                'address': "10.10.10.2",
+                'pool': pool,
+                'interface': interface
+                },
+            {
+                'address': "10.10.10.3",
+                'pool': pool,
+                'interface': interface,
+                'host': "testHost"
+                },
+            ]
+        self.compute.db.floating_ip_bulk_create(
+            context.get_admin_context(), self.ip_pool)
+
+    def tearDown(self):
+        self.compute.db.floating_ip_bulk_destroy(
+            context.get_admin_context(), self.ip_pool)
+        super(FloatingIpsBulkJsonTest, self).tearDown()
+
+    def test_floating_ips_bulk_list(self):
+        response = self._do_get('os-floating-ips-bulk')
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        return self._verify_response('floating-ips-bulk-list-resp', subs,
+                                     response)
+
+    def test_floating_ips_bulk_list_by_host(self):
+        response = self._do_get('os-floating-ips-bulk/testHost')
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        return self._verify_response('floating-ips-bulk-list-by-host-resp',
+                                     subs, response)
+
+    def test_floating_ips_bulk_create(self):
+        response = self._do_post('os-floating-ips-bulk',
+                                 'floating-ips-bulk-create-req',
+                                 {"ip_range": "192.168.1.0/24",
+                                  "pool": CONF.default_floating_pool,
+                                  "interface": CONF.public_interface})
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        return self._verify_response('floating-ips-bulk-create-resp', subs,
+                                     response)
+
+    def test_floating_ips_bulk_delete(self):
+        response = self._do_put('os-floating-ips-bulk/delete',
+                                'floating-ips-bulk-delete-req',
+                                {"ip_range": "192.168.1.0/24"})
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        return self._verify_response('floating-ips-bulk-delete-resp', subs,
+                                     response)
+
+
+class FloatingIpsBulkXmlTest(FloatingIpsBulkJsonTest):
     ctype = 'xml'
 
 

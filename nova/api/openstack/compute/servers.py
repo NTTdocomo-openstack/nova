@@ -45,7 +45,7 @@ CONF = cfg.CONF
 CONF.import_opt('enable_instance_password', 'nova.config')
 CONF.import_opt('network_api_class', 'nova.config')
 CONF.import_opt('password_length', 'nova.config')
-CONF.import_opt('reclaim_instance_interval', 'nova.config')
+CONF.import_opt('reclaim_instance_interval', 'nova.compute.manager')
 
 
 def make_fault(elem):
@@ -520,12 +520,7 @@ class Controller(wsgi.Controller):
                 msg = _("Only administrators may list deleted instances")
                 raise exc.HTTPBadRequest(explanation=msg)
 
-        # NOTE(dprince) This prevents computes' get_all() from returning
-        # instances from multiple tenants when an admin accounts is used.
-        # By default non-admin accounts are always limited to project/user
-        # both here and in the compute API.
-        if not context.is_admin or (context.is_admin and 'all_tenants'
-            not in search_opts):
+        if 'all_tenants' not in search_opts:
             if context.project_id:
                 search_opts['project_id'] = context.project_id
             else:
@@ -540,6 +535,9 @@ class Controller(wsgi.Controller):
         except exception.MarkerNotFound as e:
             msg = _('marker [%s] not found') % marker
             raise webob.exc.HTTPBadRequest(explanation=msg)
+        except exception.FlavorNotFound as e:
+            msg = _("Flavor could not be found")
+            raise webob.exc.HTTPUnprocessableEntity(explanation=msg)
 
         if is_detail:
             self._add_instance_faults(context, instance_list)
@@ -1344,7 +1342,7 @@ class Controller(wsgi.Controller):
     def _get_server_search_options(self):
         """Return server search options allowed by non-admin."""
         return ('reservation_id', 'name', 'status', 'image', 'flavor',
-                'changes-since')
+                'changes-since', 'all_tenants')
 
 
 def create_resource(ext_mgr):

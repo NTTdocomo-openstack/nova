@@ -43,10 +43,6 @@ def _get_my_ip():
 
 
 core_opts = [
-    cfg.StrOpt('sql_connection',
-               default='sqlite:///$state_path/$sqlite_db',
-               help='The SQLAlchemy connection string used to connect to the '
-                    'database'),
     cfg.StrOpt('api_paste_config',
                default="api-paste.ini",
                help='File name for the paste.deploy config for nova-api'),
@@ -66,13 +62,6 @@ debug_opts = [
     cfg.BoolOpt('fake_network',
                 default=False,
                 help='If passed, use fake network devices and addresses'),
-    cfg.IntOpt('sql_connection_debug',
-               default=0,
-               help='Verbosity of SQL debugging information. 0=None, '
-                    '100=Everything'),
-    cfg.BoolOpt('sql_connection_trace',
-               default=False,
-               help='Add python stack traces to SQL as comment strings'),
 ]
 
 cfg.CONF.register_cli_opts(core_opts)
@@ -97,6 +86,10 @@ global_opts = [
     cfg.IntOpt('glance_port',
                default=9292,
                help='default glance port'),
+    cfg.StrOpt('glance_protocol',
+                default='http',
+                help='Default protocol to use when connecting to glance. '
+                     'Set to https for SSL.'),
     cfg.ListOpt('glance_api_servers',
                 default=['$glance_host:$glance_port'],
                 help='A list of the glance api servers available to nova. '
@@ -195,39 +188,12 @@ global_opts = [
     cfg.StrOpt('default_instance_type',
                default='m1.small',
                help='default instance type to use, testing only'),
-    cfg.StrOpt('null_kernel',
-               default='nokernel',
-               help='kernel image that indicates not to use a kernel, but to '
-                    'use a raw disk image instead'),
     cfg.StrOpt('vpn_image_id',
                default='0',
                help='image id used when starting up a cloudpipe vpn server'),
     cfg.StrOpt('vpn_key_suffix',
                default='-vpn',
                help='Suffix to add to project name for vpn key and secgroups'),
-    cfg.StrOpt('sqlite_db',
-               default='nova.sqlite',
-               help='the filename to use with sqlite'),
-    cfg.BoolOpt('sqlite_synchronous',
-                default=True,
-                help='If passed, use synchronous mode for sqlite'),
-    cfg.IntOpt('sql_idle_timeout',
-               default=3600,
-               help='timeout before idle sql connections are reaped'),
-    cfg.IntOpt('sql_max_retries',
-               default=10,
-               help='maximum db connection retries during startup. '
-                    '(setting -1 implies an infinite retry count)'),
-    cfg.IntOpt('sql_retry_interval',
-               default=10,
-               help='interval between retries of opening a sql connection'),
-    cfg.IntOpt('sql_pool_size',
-               default=None,
-               help='If set, use this value for pool_size with sqlalchemy'),
-    cfg.IntOpt('sql_max_overflow',
-               default=None,
-               help='If set, use this value for max_overflow with '
-                    'sqlalchemy'),
     cfg.StrOpt('compute_manager',
                default='nova.compute.manager.ComputeManager',
                help='full class name for the Manager for compute'),
@@ -269,16 +235,6 @@ global_opts = [
                default='month',
                help='time period to generate instance usages for.  '
                     'Time period must be hour, day, month or year'),
-    cfg.IntOpt('bandwidth_poll_interval',
-               default=600,
-               help='interval to pull bandwidth usage info'),
-    cfg.BoolOpt('start_guests_on_host_boot',
-                default=False,
-                help='Whether to restart guests when the host reboots'),
-    cfg.BoolOpt('resume_guests_state_on_host_boot',
-                default=False,
-                help='Whether to start guests that were running before the '
-                     'host rebooted'),
     cfg.StrOpt('default_ephemeral_format',
                default=None,
                help='The default format an ephemeral_volume will be '
@@ -309,22 +265,12 @@ global_opts = [
                   'nova.compute.api:nova.notifier.api.notify_decorator'
                   ],
                 help='List of modules/decorators to monkey patch'),
-    cfg.BoolOpt('allow_resize_to_same_host',
-                default=False,
-                help='Allow destination machine to match source for resize. '
-                     'Useful when testing in single-host environments.'),
-    cfg.IntOpt('reclaim_instance_interval',
-               default=0,
-               help='Interval in seconds for reclaiming deleted instances'),
     cfg.IntOpt('zombie_instance_updated_at_window',
                default=172800,
                help='Number of seconds zombie instances are cleaned up.'),
     cfg.IntOpt('service_down_time',
                default=60,
                help='maximum time since last check-in for up service'),
-    cfg.StrOpt('default_schedule_zone',
-               default=None,
-               help='availability zone to use when user doesn\'t specify one'),
     cfg.ListOpt('isolated_images',
                 default=[],
                 help='Images to run on isolated host'),
@@ -349,30 +295,9 @@ global_opts = [
     cfg.StrOpt('volume_api_class',
                 default='nova.volume.cinder.API',
                 help='The full class name of the volume API class to use'),
-    cfg.StrOpt('security_group_handler',
-               default='nova.network.sg.NullSecurityGroupHandler',
-               help='The full class name of the security group handler class'),
-    cfg.StrOpt('default_access_ip_network_name',
-               default=None,
-               help='Name of network to use to set access ips for instances'),
     cfg.StrOpt('auth_strategy',
                default='noauth',
                help='The strategy to use for auth: noauth or keystone.'),
-    cfg.ListOpt('non_inheritable_image_properties',
-                default=['cache_in_nova',
-                         'bittorrent'],
-                help='These are image properties which a snapshot should not'
-                     ' inherit from an instance'),
-    cfg.BoolOpt('defer_iptables_apply',
-                default=False,
-                help='Whether to batch up the application of IPTables rules'
-                     ' during a host restart and apply all at the end of the'
-                     ' init phase'),
-    cfg.StrOpt('compute_driver',
-               help='Driver to use for controlling virtualization. Options '
-                   'include: libvirt.LibvirtDriver, xenapi.XenAPIDriver, '
-                   'fake.FakeDriver, baremetal.BareMetalDriver, '
-                   'vmwareapi.VMWareESXDriver'),
 ]
 
 cfg.CONF.register_opts(global_opts)

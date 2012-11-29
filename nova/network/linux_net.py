@@ -840,7 +840,7 @@ def restart_dhcp(context, dev, network_ref):
             LOG.debug(_('Pid %d is stale, relaunching dnsmasq'), pid)
 
     cmd = ['env',
-           'FLAGFILE=%s' % CONF.dhcpbridge_flagfile,
+           'CONFIG_FILE=%s' % CONF.dhcpbridge_flagfile,
            'NETWORK_ID=%s' % str(network_ref['id']),
            'dnsmasq',
            '--strict-order',
@@ -1033,7 +1033,7 @@ def _create_veth_pair(dev1_name, dev2_name):
                 utils.execute('ip', 'link', 'delete', dev1_name,
                               run_as_root=True, check_exit_code=[0, 2, 254])
             except exception.ProcessExecutionError:
-                LOG.exception("Error clearing stale veth %s" % dev)
+                LOG.exception(_("Error clearing stale veth %s") % dev)
 
     utils.execute('ip', 'link', 'add', dev1_name, 'type', 'veth', 'peer',
                   'name', dev2_name, run_as_root=True)
