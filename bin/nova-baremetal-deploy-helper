@@ -92,8 +92,8 @@ def logout_iscsi(portal_address, portal_port, target_iqn):
 def make_partitions(dev, root_mb, swap_mb):
     """Create partitions for root and swap on a disk device"""
     commands = ['o,w',
-                'n,p,1,,+%dM,t,1,82,w' % root_mb,
-                'n,p,2,,+%dM,t,2,83,w' % swap_mb,
+                'n,p,1,,+%dM,t,83,w' % root_mb,
+                'n,p,2,,+%dM,t,2,82,w' % swap_mb,
                 'a,1,w',
                 ]
     for command in commands:
