@@ -1,4 +1,3 @@
-# Copyright (c) 2012 OpenStack, LLC.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -189,6 +188,7 @@ class ResourceTracker(object):
                                            **values)
         instance_ref['host'] = self.host
         instance_ref['launched_on'] = self.host
+        instance_ref['node'] = self.nodename
 
     def abort_instance_claim(self, instance):
         """Remove usage from the given instance"""
