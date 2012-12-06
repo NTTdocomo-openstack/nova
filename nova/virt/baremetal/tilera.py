@@ -30,20 +30,24 @@ from nova.openstack.common import cfg
 from nova.openstack.common import fileutils
 from nova.openstack.common import log as logging
 from nova import utils
+from nova.virt.baremetal import base
 from nova.virt.baremetal import utils as bm_utils
 from nova.virt.disk import api as disk
-
-CONF = cfg.CONF
-
-LOG = logging.getLogger(__name__)
 
 tilera_opts = [
     cfg.StrOpt('tile_monitor',
                default='/usr/local/TileraMDE/bin/tile-monitor',
                help='Tilera command line program for Bare-metal driver'),
-            ]
+    cfg.IntOpt('tile_service_wait',
+               default=3,
+               help='wait time in seconds until check the result '
+                    'after tilera service operations'),
+    ]
 
+CONF = cfg.CONF
 CONF.register_opts(tilera_opts)
+
+LOG = logging.getLogger(__name__)
 
 
 def get_baremetal_nodes():
@@ -61,7 +65,7 @@ def _late_load_cheetah():
         Template = t.Template
 
 
-class TILERA(object):
+class TILERA(base.NodeDriver):
 
     def __init__(self):
         if not CONF.tile_monitor:
@@ -212,7 +216,7 @@ class TILERA(object):
                " - --wait --quit")
         LOG.debug("cmd=%s", cmd)
         subprocess.Popen(cmd, shell=True)
-        time.sleep(5)
+        time.sleep(CONF.tile_service_wait)
 
     def _ssh_set(self, node_ip):
         """
@@ -223,7 +227,7 @@ class TILERA(object):
                "/usr/sbin/sshd - --wait --quit")
         LOG.debug("cmd=%s", cmd)
         subprocess.Popen(cmd, shell=True)
-        time.sleep(5)
+        time.sleep(CONF.tile_service_wait)
 
     def _iptables_set(self, var, node_ip, user_data):
         """
@@ -272,5 +276,5 @@ class TILERA(object):
                     " --resume --net " + node_ip +
                     " -- dmesg > " + log_path)
         subprocess.Popen(kmsg_cmd, shell=True)
-        time.sleep(5)
+        time.sleep(CONF.tile_service_wait)
         utils.execute('cp', log_path, console_log)

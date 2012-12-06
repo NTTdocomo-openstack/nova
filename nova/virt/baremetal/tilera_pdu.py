@@ -26,9 +26,34 @@ from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova import utils
 from nova.virt.baremetal import baremetal_states
+from nova.virt.baremetal import base
+
+tilera_pdu_opts = [
+    cfg.StrOpt('tile_pdu_ip',
+               default='10.0.100.1',
+               help='ip address of tilera pdu'),
+    cfg.StrOpt('tile_pdu_mgr',
+               default='/tftboot/pdu_mgr',
+               help='management script for tilera pdu'),
+    cfg.IntOpt('tile_pdu_off',
+               default=2,
+               help='power status of tilera PDU is OFF'),
+    cfg.IntOpt('tile_pdu_on',
+               default=1,
+               help='power status of tilera PDU is ON'),
+    cfg.IntOpt('tile_power_retry',
+               default=3,
+               help='maximum number of retries for tilera power operations'),
+    cfg.IntOpt('tile_power_wait',
+               default=90,
+               help='wait time in seconds until check the result '
+                    'after tilera power operations'),
+    ]
 
 CONF = cfg.CONF
-CONF.import_opt('tile_monitor', 'nova.virt.baremetal.tilera')
+CONF.register_opts(tilera_pdu_opts)
+CONF.import_opt('tile_service_wait', 'nova.virt.baremetal.tilera')
+CONF.import_opt('baremetal_tftp_root', 'nova.virt.baremetal.driver')
 
 LOG = logging.getLogger(__name__)
 
@@ -42,7 +67,7 @@ class PduError(Exception):
         return "%s: %s" % (self.status, self.message)
 
 
-class Pdu(object):
+class Pdu(base.PowerManager):
 
     def __init__(self, node):
         self._address = node['pm_address']
@@ -54,11 +79,12 @@ class Pdu(object):
 
     def _exec_status(self):
         LOG.debug(_("Before ping to the bare-metal node"))
-        tile_output = "/tftpboot/tile_output_" + str(self._node_id)
+        tile_output = CONF.baremetal_tftp_root + "/tile_output_" + \
+                    str(self._node_id)
         grep_cmd = ("ping -c1 " + self._address + " | grep Unreachable > " +
                     tile_output)
         subprocess.Popen(grep_cmd, shell=True)
-        time.sleep(5)
+        time.sleep(CONF.tile_service_wait)
         file = open(tile_output, "r")
         out = file.readline().find("Unreachable")
         utils.execute('rm', tile_output, run_as_root=True)
@@ -85,34 +111,27 @@ class Pdu(object):
         changed. /tftpboot/pdu_mgr script handles power management of
         PDU (Power Distribution Unit).
         """
-        if self._node_id < 5:
-            pdu_num = 1
-            pdu_outlet_num = self._node_id + 5
-        else:
-            pdu_num = 2
-            pdu_outlet_num = self._node_id
-        path1 = "10.0.100." + str(pdu_num)
-        utils.execute('/tftpboot/pdu_mgr', path1, str(pdu_outlet_num),
+        utils.execute(CONF.tile_pdu_mgr, CONF.tile_pdu_ip,
                       str(mode), '>>', 'pdu_output')
 
     def _power_on(self):
         count = 1
-        self._power_mgr(2)
-        self._power_mgr(3)
-        time.sleep(100)
+        self._power_mgr(CONF.tile_pdu_off)
+        self._power_mgr(CONF.tile_pdu_on)
+        time.sleep(CONF.tile_power_wait)
         while not self.is_power_on():
             count += 1
-            if count > 3:
+            if count > CONF.tile_power_retry:
                 LOG.exception("power_on failed")
                 return baremetal_states.ERROR
-            self._power_mgr(2)
-            self._power_mgr(3)
-            time.sleep(120)
+            self._power_mgr(CONF.tile_pdu_off)
+            self._power_mgr(CONF.tile_pdu_on)
+            time.sleep(CONF.tile_power_wait)
         return baremetal_states.ACTIVE
 
     def _power_off(self):
         try:
-            self._power_mgr(2)
+            self._power_mgr(CONF.tile_pdu_off)
         except Exception:
             LOG.exception("power_off failed")
             return baremetal_states.ERROR
