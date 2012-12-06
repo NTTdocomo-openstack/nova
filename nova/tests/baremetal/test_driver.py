@@ -21,6 +21,7 @@ Tests for baremetal driver.
 import mox
 
 from nova.db.sqlalchemy import models as nova_models
+from nova import exception
 from nova import test
 from nova.tests.baremetal.db import base
 from nova.tests.baremetal.db import utils
@@ -140,7 +141,7 @@ class BaremetalDriverSpawnTestCase(test.TestCase):
     def test_node_not_found(self):
         self.instance['node'] = "123456789"
         self.assertRaises(
-                bm_driver.NodeNotFound,
+                exception.InstanceNotFound,
                 self.driver.spawn,
                 **self.kwargs)
 
