@@ -17,44 +17,42 @@
 #    under the License.
 
 from nova.virt.baremetal import baremetal_states
-from nova.virt.baremetal import base
 
 
-def get_baremetal_nodes():
-    return Fake()
-
-
-class Fake(base.NodeDriver):
+class NodeDriver(object):
 
     def define_vars(self, instance, network_info, block_device_info):
-        return {}
+        raise NotImplementedError()
 
     def create_image(self, var, context, image_meta, node, instance,
                      injected_files=None, admin_password=None):
-        pass
+        raise NotImplementedError()
 
     def destroy_images(self, var, context, node, instance):
-        pass
+        raise NotImplementedError()
 
     def activate_bootloader(self, var, context, node, instance, image_meta):
-        pass
+        raise NotImplementedError()
 
     def deactivate_bootloader(self, var, context, node, instance):
-        pass
+        raise NotImplementedError()
 
     def activate_node(self, var, context, node, instance):
         """For operations after power on."""
-        pass
+        raise NotImplementedError()
 
     def deactivate_node(self, var, context, node, instance):
         """For operations before power off."""
-        pass
+        raise NotImplementedError()
 
     def get_console_output(self, node, instance):
-        return 'fake\nconsole\noutput for instance %s' % instance['id']
+        raise NotImplementedError()
 
 
-class FakePowerManager(base.PowerManager):
+class PowerManager(object):
+
+    def __init__(self, node):
+        pass
 
     def activate_node(self):
         return baremetal_states.ACTIVE
@@ -66,8 +64,10 @@ class FakePowerManager(base.PowerManager):
         return baremetal_states.DELETED
 
     def is_power_on(self):
+        """Returns True or False according as the node's power state"""
         return True
 
+    # TODO(NTTdocomo): split out console methods to its own class
     def start_console(self):
         pass
 

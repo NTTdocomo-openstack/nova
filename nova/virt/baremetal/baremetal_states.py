@@ -30,4 +30,3 @@ ACTIVE = 'active'
 BUILDING = 'building'
 DELETED = 'deleted'
 ERROR = 'error'
-# TODO(deva): add 'deploying' state

@@ -19,9 +19,13 @@ Tests for baremetal pxe driver.
 
 import mox
 
+from nova import exception
+from nova.openstack.common import cfg
 from nova import test
 
 from nova.virt.baremetal import pxe
+
+CONF = cfg.CONF
 
 
 class BaremetalPXETestCase(test.TestCase):

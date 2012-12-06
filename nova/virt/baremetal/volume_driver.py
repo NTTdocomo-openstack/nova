@@ -59,7 +59,9 @@ def _get_baremetal_node_by_instance_name(virtapi, instance_name):
                 return node
         except exception.InstanceNotFound:
             continue
-    return None
+
+    # raise exception if we found no matching instance
+    raise exception.InstanceNotFound(instance_name)
 
 
 def _create_iscsi_export_tgtadm(path, tid, iqn):
@@ -122,7 +124,7 @@ def _delete_iscsi_export_tgtadm(tid):
             # OK, the tid is deleted
             return
         raise
-    raise exception.NovaException("tid %s is not deleted" % tid)
+    raise exception.NovaException(_("tid %s is not deleted") % tid)
 
 
 def _list_backingstore_path():
@@ -222,11 +224,8 @@ class LibvirtVolumeDriver(VolumeDriver):
         return method(connection_info, *args, **kwargs)
 
     def attach_volume(self, connection_info, instance_name, mountpoint):
-        # TODO(deva): move exception generation into db layer
         node = _get_baremetal_node_by_instance_name(self.virtapi,
                                                     instance_name)
-        if not node:
-            raise exception.InstanceNotFound(instance_id=instance_name)
         ctx = nova_context.get_admin_context()
         pxe_ip = bmdb.bm_pxe_ip_get_by_bm_node_id(ctx, node['id'])
         if not pxe_ip:

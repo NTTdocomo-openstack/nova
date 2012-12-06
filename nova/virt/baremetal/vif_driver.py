@@ -13,14 +13,14 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from nova import config
 from nova import context
 from nova import exception
+from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova.virt.baremetal import db as bmdb
 from nova.virt.vif import VIFDriver
 
-CONF = config.CONF
+CONF = cfg.CONF
 
 LOG = logging.getLogger(__name__)
 
@@ -38,8 +38,9 @@ class BareMetalVIFDriver(VIFDriver):
         network, mapping = vif
         ctx = context.get_admin_context()
         node = bmdb.bm_node_get_by_instance_uuid(ctx, instance['uuid'])
-        if not node:
-            return
+
+        # TODO(deva): optimize this database query
+        #             this is just searching for a free physical interface
         pifs = bmdb.bm_interface_get_all_by_bm_node_id(ctx, node['id'])
         for pif in pifs:
             if not pif['vif_uuid']:
@@ -49,19 +50,23 @@ class BareMetalVIFDriver(VIFDriver):
                           pif['id'], mapping.get('vif_uuid'))
                 self._after_plug(instance, network, mapping, pif)
                 return
-        raise exception.NovaException(
-                "baremetalnode:%s has no vacant pif for vif_uuid=%s"
+
+        # NOTE(deva): should this really be raising an exception
+        #             when there are no physical interfaces left?
+        raise exception.NovaException(_(
+                "Baremetal node: %(id)s has no available physical interface"
+                " for virtual interface %(uuid)s")
                 % (node['id'], mapping['vif_uuid']))
 
     def unplug(self, instance, vif):
         LOG.debug("unplug: instance_uuid=%s vif=%s", instance['uuid'], vif)
         network, mapping = vif
         ctx = context.get_admin_context()
-        pif = bmdb.bm_interface_get_by_vif_uuid(ctx, mapping['vif_uuid'])
-        if pif:
+        try:
+            pif = bmdb.bm_interface_get_by_vif_uuid(ctx, mapping['vif_uuid'])
             bmdb.bm_interface_set_vif_uuid(ctx, pif['id'], None)
             LOG.debug("pif:%s is unplugged (vif_uuid=%s)",
                       pif['id'], mapping.get('vif_uuid'))
             self._after_unplug(instance, network, mapping, pif)
-        else:
+        except exception.NovaException:
             LOG.warn("no pif for vif_uuid=%s" % mapping['vif_uuid'])

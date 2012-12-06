@@ -29,6 +29,7 @@ from nova.openstack.common import cfg
 from nova.openstack.common import fileutils
 from nova.openstack.common import log as logging
 from nova import utils
+from nova.virt.baremetal import base
 from nova.virt.baremetal import db as bmdb
 from nova.virt.baremetal import utils as bm_utils
 from nova.virt.baremetal import vlan
@@ -132,7 +133,8 @@ def _build_pxe_config(deployment_id, deployment_key, deployment_iscsi_iqn,
                       deployment_aki_path, deployment_ari_path,
                       aki_path, ari_path,
                       iscsi_portal):
-    # 'default deploy' will be replaced to 'default boot' by bm_deploy_server
+    # nova-baremetal-deploy-helper will change 'default deploy'
+    # to 'default boot' after the image deployment is complete
     pxeconf = "default deploy\n"
     pxeconf += "\n"
 
@@ -155,7 +157,7 @@ def _build_pxe_config(deployment_id, deployment_key, deployment_iscsi_iqn,
     pxeconf += "kernel %s\n" % aki_path
     pxeconf += "append"
     pxeconf += " initrd=%s" % ari_path
-    # ${ROOT} will be replaced to UUID=... by bm_deploy_server
+    # nova-baremetal-deploy-helper will set ${ROOT} to proper UUID
     pxeconf += " root=${ROOT} ro"
     if iscsi_portal:
         pxeconf += ' bm_iscsi_portal=%s' % iscsi_portal
@@ -220,7 +222,7 @@ def _stop_per_host_pxe_server(tftp_root, vlan_id):
     iptables.apply()
 
 
-class PXE(object):
+class PXE(base.NodeDriver):
 
     def define_vars(self, instance, network_info, block_device_info):
         var = {}

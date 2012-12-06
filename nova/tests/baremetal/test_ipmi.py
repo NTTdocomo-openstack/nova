@@ -23,6 +23,7 @@ import time
 
 import mox
 
+from nova.openstack.common import cfg
 from nova import test
 from nova import utils as nova_utils
 
@@ -31,6 +32,8 @@ from nova.virt.baremetal import baremetal_states
 from nova.virt.baremetal import ipmi
 from nova.virt.baremetal import utils as bm_utils
 from nova.virt.libvirt import utils as libvirt_utils
+
+CONF = cfg.CONF
 
 
 class BareMetalIPMITestCase(test.TestCase):

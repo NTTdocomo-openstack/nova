@@ -20,8 +20,8 @@ Tests for baremetal driver.
 
 import mox
 
-from nova.db.sqlalchemy import models as nova_models
 from nova import exception
+from nova.openstack.common import cfg
 from nova import test
 from nova.tests.baremetal.db import base
 from nova.tests.baremetal.db import utils
@@ -33,6 +33,9 @@ from nova.virt.baremetal import db
 from nova.virt.baremetal import driver as bm_driver
 from nova.virt.baremetal import volume_driver
 from nova.virt.firewall import NoopFirewallDriver
+
+
+CONF = cfg.CONF
 
 
 class FakeVifDriver(object):
@@ -61,13 +64,6 @@ NICS = [
 
 def class_path(class_):
     return class_.__module__ + '.' + class_.__name__
-
-
-def _system_metadata(key, value):
-    sm = nova_models.InstanceSystemMetadata()
-    sm['key'] = key
-    sm['value'] = value
-    return sm
 
 
 COMMON_FLAGS = dict(
@@ -107,7 +103,6 @@ class BaremetalDriverSpawnTestCase(test.TestCase):
 
         self.context = test_utils.get_test_admin_context()
         self.instance = test_utils.get_test_instance()
-        self.instance['uuid'] = '12345'
         self.network_info = test_utils.get_test_network_info()
         self.block_device_info = None
         self.image_meta = test_utils.get_test_image_info(None, self.instance)
@@ -134,7 +129,7 @@ class BaremetalDriverSpawnTestCase(test.TestCase):
 
     def test_without_node(self):
         self.assertRaises(
-                bm_driver.NodeNotSpecified,
+                exception.NovaException,
                 self.driver.spawn,
                 **self.kwargs)
 
@@ -150,7 +145,7 @@ class BaremetalDriverSpawnTestCase(test.TestCase):
         db.bm_node_update(self.context, self.node_id,
                           {'instance_uuid': 'something'})
         self.assertRaises(
-                bm_driver.NodeInUse,
+                exception.NovaException,
                 self.driver.spawn,
                 **self.kwargs)
 

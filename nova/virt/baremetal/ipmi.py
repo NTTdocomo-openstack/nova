@@ -29,19 +29,20 @@ from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova import utils
 from nova.virt.baremetal import baremetal_states
+from nova.virt.baremetal import base
 from nova.virt.baremetal import utils as bm_utils
 from nova.virt.libvirt import utils as libvirt_utils
 
 opts = [
-    cfg.StrOpt('baremetal_term',
+    cfg.StrOpt('baremetal_terminal',
                default='shellinaboxd',
                help='path to baremetal terminal program'),
-    cfg.StrOpt('baremetal_term_cert_dir',
+    cfg.StrOpt('baremetal_terminal_cert_dir',
                default=None,
                help='path to baremetal terminal SSL cert(PEM)'),
-    cfg.StrOpt('baremetal_term_pid_dir',
+    cfg.StrOpt('baremetal_terminal_pid_dir',
                default='$state_path/baremetal/console',
-               help='path to directory stores pidfiles of baremetal_term'),
+               help='path to directory stores pidfiles of baremetal_terminal'),
     cfg.IntOpt('baremetal_ipmi_power_retry',
                default=3,
                help='maximal number of retries for IPMI operations'),
@@ -67,7 +68,7 @@ def _make_password_file(password):
 
 def _console_pidfile(node_id):
     name = "%s.pid" % node_id
-    path = os.path.join(CONF.baremetal_term_pid_dir, name)
+    path = os.path.join(CONF.baremetal_terminal_pid_dir, name)
     return path
 
 
@@ -102,7 +103,7 @@ class IpmiError(Exception):
         return "%s: %s" % (self.status, self.msg)
 
 
-class Ipmi(object):
+class Ipmi(base.PowerManager):
 
     def __init__(self, node):
         self._node_id = node['id']
@@ -119,17 +120,16 @@ class Ipmi(object):
             raise IpmiError(-1, "password is None")
 
     def _exec_ipmitool(self, command):
-        args = []
-        args.append("ipmitool")
-        args.append("-I")
-        args.append(self._interface)
-        args.append("-H")
-        args.append(self._address)
-        args.append("-U")
-        args.append(self._user)
-        args.append("-f")
-        pwfile = _make_password_file(self._password)
         try:
+            args = ['ipmitool',
+                    '-I',
+                    self._interface,
+                    '-H',
+                    self._address,
+                    '-U',
+                    self._user,
+                    '-f']
+            pwfile = _make_password_file(self._password)
             args.append(pwfile)
             args.extend(command.split(" "))
             out, err = utils.execute(*args, attempts=3)
@@ -180,10 +180,10 @@ class Ipmi(object):
         if not self._terminal_port:
             return
         args = []
-        args.append(CONF.baremetal_term)
-        if CONF.baremetal_term_cert_dir:
+        args.append(CONF.baremetal_terminal)
+        if CONF.baremetal_terminal_cert_dir:
             args.append("-c")
-            args.append(CONF.baremetal_term_cert_dir)
+            args.append(CONF.baremetal_terminal_cert_dir)
         else:
             args.append("-t")
         args.append("-p")

@@ -150,7 +150,7 @@ Set these flags in nova.conf::
 	baremetal_tftp_root = /tftpboot
 
 	# path to shellinaboxd
-	baremetal_term = /usr/local/bin/shellinaboxd
+	baremetal_terminal = /usr/local/bin/shellinaboxd
 
 	# deployment kernel & ramdisk image id
 	baremetal_deploy_kernel = d76012fc-4055-485c-a978-f748679b89a9
