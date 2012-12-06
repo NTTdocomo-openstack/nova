@@ -28,7 +28,6 @@ terminating it.
 **Related Flags**
 
 :instances_path:  Where instances are kept on disk
-:base_dir_name:  Where cached images are stored under instances_path
 
 """
 
@@ -78,11 +77,6 @@ from nova import volume
 
 
 compute_opts = [
-    cfg.StrOpt('base_dir_name',
-               default='_base',
-               help="Where cached images are stored under $instances_path."
-                    "This is NOT the full path - just a folder name."
-                    "For per-compute-host cached images, set to _base_$my_ip"),
     cfg.StrOpt('console_host',
                default=socket.getfqdn(),
                help='Console proxy host to use to connect '
@@ -108,9 +102,6 @@ compute_opts = [
                 default=False,
                 help='Whether to start guests that were running before the '
                      'host rebooted'),
-    cfg.BoolOpt('start_guests_on_host_boot',
-                default=False,
-                help='Whether to restart guests when the host reboots'),
     ]
 
 interval_opts = [
@@ -131,6 +122,9 @@ interval_opts = [
     cfg.IntOpt('reclaim_instance_interval',
                default=0,
                help='Interval in seconds for reclaiming deleted instances'),
+    cfg.IntOpt('volume_usage_poll_interval',
+               default=0,
+               help='Interval in seconds for gathering volume usages'),
 ]
 
 timeout_opts = [
@@ -264,10 +258,12 @@ class ComputeVirtAPI(virtapi.VirtAPI):
                                               **updates)
 
     def instance_get_by_uuid(self, context, instance_uuid):
-        return self._compute.db.instance_get_by_uuid(context, instance_uuid)
+        return self._compute.conductor_api.instance_get_by_uuid(
+            context, instance_uuid)
 
     def instance_get_all_by_host(self, context, host):
-        return self._compute.db.instance_get_all_by_host(context, host)
+        return self._compute.conductor_api.instance_get_all_by_host(
+            context, host)
 
     def aggregate_get_by_host(self, context, host, key=None):
         return self._compute.db.aggregate_get_by_host(context, host, key=key)
@@ -307,7 +303,7 @@ class ComputeVirtAPI(virtapi.VirtAPI):
 class ComputeManager(manager.SchedulerDependentManager):
     """Manages the running instances from creation to destruction."""
 
-    RPC_API_VERSION = '2.19'
+    RPC_API_VERSION = '2.20'
 
     def __init__(self, compute_driver=None, *args, **kwargs):
         """Load configuration options and connect to the hypervisor."""
@@ -319,6 +315,7 @@ class ComputeManager(manager.SchedulerDependentManager):
             CONF.network_manager, host=kwargs.get('host', None))
         self._last_host_check = 0
         self._last_bw_usage_poll = 0
+        self._last_vol_usage_poll = 0
         self._last_info_cache_heal = 0
         self.compute_api = compute.API()
         self.compute_rpcapi = compute_rpcapi.ComputeAPI()
@@ -359,6 +356,60 @@ class ComputeManager(manager.SchedulerDependentManager):
                         'trying to set it to ERROR'),
                       instance_uuid=instance_uuid)
 
+    def _init_instance(self, context, instance):
+        '''Initialize this instance during service init.'''
+        db_state = instance['power_state']
+        drv_state = self._get_power_state(context, instance)
+        closing_vm_states = (vm_states.DELETED,
+                             vm_states.SOFT_DELETED)
+
+        # instance was supposed to shut down - don't attempt
+        # recovery in any case
+        if instance['vm_state'] in closing_vm_states:
+            return
+
+        expect_running = (db_state == power_state.RUNNING and
+                          drv_state != db_state)
+
+        LOG.debug(_('Current state is %(drv_state)s, state in DB is '
+                    '%(db_state)s.'), locals(), instance=instance)
+
+        net_info = compute_utils.get_nw_info_for_instance(instance)
+
+        # We're calling plug_vifs to ensure bridge and iptables
+        # rules exist. This needs to be called for each instance.
+        legacy_net_info = self._legacy_nw_info(net_info)
+        self.driver.plug_vifs(instance, legacy_net_info)
+
+        if expect_running and CONF.resume_guests_state_on_host_boot:
+            LOG.info(
+                   _('Rebooting instance after nova-compute restart.'),
+                   locals(), instance=instance)
+
+            block_device_info = \
+                self._get_instance_volume_block_device_info(
+                    context, instance['uuid'])
+
+            try:
+                self.driver.resume_state_on_host_boot(
+                        context,
+                        instance,
+                        self._legacy_nw_info(net_info),
+                        block_device_info)
+            except NotImplementedError:
+                LOG.warning(_('Hypervisor driver does not support '
+                              'resume guests'), instance=instance)
+
+        elif drv_state == power_state.RUNNING:
+            # VMWareAPI drivers will raise an exception
+            try:
+                self.driver.ensure_filtering_rules_for_instance(
+                                       instance,
+                                       self._legacy_nw_info(net_info))
+            except NotImplementedError:
+                LOG.warning(_('Hypervisor driver does not support '
+                              'firewall rules'), instance=instance)
+
     def init_host(self):
         """Initialization for a standalone compute service."""
         self.driver.init_host(host=self.host)
@@ -369,61 +420,8 @@ class ComputeManager(manager.SchedulerDependentManager):
             self.driver.filter_defer_apply_on()
 
         try:
-            for count, instance in enumerate(instances):
-                db_state = instance['power_state']
-                drv_state = self._get_power_state(context, instance)
-                closing_vm_states = (vm_states.DELETED,
-                                     vm_states.SOFT_DELETED)
-
-                # instance was supposed to shut down - don't attempt
-                # recovery in any case
-                if instance['vm_state'] in closing_vm_states:
-                    continue
-
-                expect_running = (db_state == power_state.RUNNING and
-                                  drv_state != db_state)
-
-                LOG.debug(_('Current state is %(drv_state)s, state in DB is '
-                            '%(db_state)s.'), locals(), instance=instance)
-
-                net_info = compute_utils.get_nw_info_for_instance(instance)
-
-                # We're calling plug_vifs to ensure bridge and iptables
-                # filters are present, calling it once is enough.
-                if count == 0:
-                    legacy_net_info = self._legacy_nw_info(net_info)
-                    self.driver.plug_vifs(instance, legacy_net_info)
-
-                if ((expect_running and CONF.resume_guests_state_on_host_boot)
-                     or CONF.start_guests_on_host_boot):
-                    LOG.info(
-                           _('Rebooting instance after nova-compute restart.'),
-                           locals(), instance=instance)
-
-                    block_device_info = \
-                        self._get_instance_volume_block_device_info(
-                            context, instance['uuid'])
-
-                    try:
-                        self.driver.resume_state_on_host_boot(
-                                context,
-                                instance,
-                                self._legacy_nw_info(net_info),
-                                block_device_info)
-                    except NotImplementedError:
-                        LOG.warning(_('Hypervisor driver does not support '
-                                      'resume guests'), instance=instance)
-
-                elif drv_state == power_state.RUNNING:
-                    # VMWareAPI drivers will raise an exception
-                    try:
-                        self.driver.ensure_filtering_rules_for_instance(
-                                               instance,
-                                               self._legacy_nw_info(net_info))
-                    except NotImplementedError:
-                        LOG.warning(_('Hypervisor driver does not support '
-                                      'firewall rules'), instance=instance)
-
+            for instance in instances:
+                self._init_instance(context, instance)
         finally:
             if CONF.defer_iptables_apply:
                 self.driver.filter_defer_apply_off()
@@ -591,7 +589,11 @@ class ComputeManager(manager.SchedulerDependentManager):
                 LOG.debug(_("No node specified, defaulting to %(node)s") %
                           locals())
 
-            extra_usage_info = {"image_name": image_meta['name']}
+            if image_meta:
+                extra_usage_info = {"image_name": image_meta['name']}
+            else:
+                extra_usage_info = {}
+
             self._start_building(context, instance)
             self._notify_about_instance_usage(
                     context, instance, "create.start",
@@ -772,7 +774,10 @@ class ComputeManager(manager.SchedulerDependentManager):
                image, but is accurate because it reflects the image's
                actual size.
         """
-        image_meta = _get_image_meta(context, instance['image_ref'])
+        if instance['image_ref']:
+            image_meta = _get_image_meta(context, instance['image_ref'])
+        else:  # Instance was started from volume - so no image ref
+            return {}
 
         try:
             size_bytes = image_meta['size']
@@ -1207,7 +1212,10 @@ class ComputeManager(manager.SchedulerDependentManager):
             LOG.audit(_("Rebuilding instance"), context=context,
                       instance=instance)
 
-            image_meta = _get_image_meta(context, image_ref)
+            if image_ref:
+                image_meta = _get_image_meta(context, image_ref)
+            else:
+                image_meta = {}
 
             # This instance.exists message should contain the original
             # image_ref, not the new one.  Since the DB has been updated
@@ -1219,7 +1227,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                     extra_usage_info=extra_usage_info)
 
             # This message should contain the new image_ref
-            extra_usage_info = {'image_name': image_meta['name']}
+            extra_usage_info = {'image_name': image_meta.get('name', '')}
             self._notify_about_instance_usage(context, instance,
                     "rebuild.start", extra_usage_info=extra_usage_info)
 
@@ -1560,10 +1568,12 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         network_info = self._get_instance_nw_info(context, instance)
 
-        # Boot the instance using the 'base' image instead of the user's
-        # current (possibly broken) image
         rescue_image_ref = self._get_rescue_image_ref(context, instance)
-        rescue_image_meta = _get_image_meta(context, rescue_image_ref)
+
+        if rescue_image_ref:
+            rescue_image_meta = _get_image_meta(context, rescue_image_ref)
+        else:
+            rescue_image_meta = {}
 
         with self._error_out_instance_on_exception(context, instance['uuid']):
             self.driver.rescue(context, instance,
@@ -1631,7 +1641,7 @@ class ComputeManager(manager.SchedulerDependentManager):
             self.driver.confirm_migration(migration, instance,
                                           self._legacy_nw_info(network_info))
 
-            rt = self._get_resource_tracker(instance.get('node'))
+            rt = self._get_resource_tracker(migration['source_node'])
             rt.confirm_resize(context, migration)
 
             self._notify_about_instance_usage(
@@ -1770,7 +1780,7 @@ class ComputeManager(manager.SchedulerDependentManager):
             QUOTAS.rollback(context, reservations)
 
     def _prep_resize(self, context, image, instance, instance_type,
-            reservations, request_spec, filter_properties):
+            reservations, request_spec, filter_properties, node):
 
         if not filter_properties:
             filter_properties = {}
@@ -1787,7 +1797,7 @@ class ComputeManager(manager.SchedulerDependentManager):
             raise exception.MigrationError(msg)
 
         limits = filter_properties.get('limits', {})
-        rt = self._get_resource_tracker(instance.get('node'))
+        rt = self._get_resource_tracker(node)
         with rt.resize_claim(context, instance, instance_type, limits=limits) \
                 as claim:
             migration_ref = claim.migration
@@ -1802,12 +1812,17 @@ class ComputeManager(manager.SchedulerDependentManager):
     @wrap_instance_fault
     def prep_resize(self, context, image, instance, instance_type,
                     reservations=None, request_spec=None,
-                    filter_properties=None):
+                    filter_properties=None, node=None):
         """Initiates the process of moving a running instance to another host.
 
         Possibly changes the RAM and disk size in the process.
 
         """
+        if node is None:
+            node = self.driver.get_available_nodes()[0]
+            LOG.debug(_("No node specified, defaulting to %(node)s") %
+                      locals())
+
         with self._error_out_instance_on_exception(context, instance['uuid'],
                                                    reservations):
             compute_utils.notify_usage_exists(
@@ -1816,7 +1831,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                     context, instance, "resize.prep.start")
             try:
                 self._prep_resize(context, image, instance, instance_type,
-                        reservations, request_spec, filter_properties)
+                        reservations, request_spec, filter_properties, node)
             except Exception:
                 # try to re-schedule the resize elsewhere:
                 self._reschedule_resize_or_reraise(context, image, instance,
@@ -1911,6 +1926,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
             instance = self._instance_update(context, instance['uuid'],
                     host=migration['dest_compute'],
+                    node=migration['dest_node'],
                     task_state=task_states.RESIZE_MIGRATED,
                     expected_task_state=task_states.
                     RESIZE_MIGRATING)
@@ -2389,6 +2405,24 @@ class ComputeManager(manager.SchedulerDependentManager):
         """Detach a volume from an instance."""
         bdm = self._get_instance_volume_bdm(context, instance['uuid'],
                                             volume_id)
+        if CONF.volume_usage_poll_interval > 0:
+            vol_stats = []
+            mp = bdm['device_name']
+            # Handle bootable volumes which will not contain /dev/
+            if '/dev/' in mp:
+                mp = mp[5:]
+            try:
+                vol_stats = self.driver.block_stats(instance['name'], mp)
+            except NotImplementedError:
+                pass
+
+            if vol_stats:
+                LOG.debug(_("Updating volume usage cache with totals"))
+                rd_req, rd_bytes, wr_req, wr_bytes, flush_ops = vol_stats
+                self.db.vol_usage_update(context, volume_id, rd_req, rd_bytes,
+                                         wr_req, wr_bytes, instance['id'],
+                                         update_totals=True)
+
         self._detach_volume(context, instance, bdm)
         volume = self.volume_api.get(context, volume_id)
         connector = self.driver.get_volume_connector(instance)
@@ -2744,7 +2778,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         while not instance or instance['host'] != self.host:
             if instance_uuids:
                 try:
-                    instance = self.db.instance_get_by_uuid(context,
+                    instance = self.conductor_api.instance_get_by_uuid(context,
                         instance_uuids.pop(0))
                 except exception.InstanceNotFound:
                     # Instance is gone.  Try to grab another.
@@ -2813,8 +2847,8 @@ class ComputeManager(manager.SchedulerDependentManager):
                            "%(migration_id)s for instance %(instance_uuid)s"),
                            locals())
                 try:
-                    instance = self.db.instance_get_by_uuid(context,
-                                                            instance_uuid)
+                    instance = self.conductor_api.instance_get_by_uuid(
+                        context, instance_uuid)
                 except exception.InstanceNotFound:
                     reason = _("Instance %(instance_uuid)s not found")
                     _set_migration_to_error(migration, reason % locals())
@@ -2954,6 +2988,72 @@ class ComputeManager(manager.SchedulerDependentManager):
                                         bw_ctr['bw_out'],
                                         last_refreshed=refreshed)
 
+    def _get_host_volume_bdms(self, context, host):
+        """Return all block device mappings on a compute host"""
+        compute_host_bdms = []
+        instances = self.db.instance_get_all_by_host(context, self.host)
+        for instance in instances:
+            instance_bdms = self._get_instance_volume_bdms(context,
+                                                           instance['uuid'])
+            compute_host_bdms.append(dict(instance=instance,
+                                          instance_bdms=instance_bdms))
+
+        return compute_host_bdms
+
+    def _update_volume_usage_cache(self, context, vol_usages, refreshed):
+        """Updates the volume usage cache table with a list of stats"""
+        for usage in vol_usages:
+            # Allow switching of greenthreads between queries.
+            greenthread.sleep(0)
+            self.db.vol_usage_update(context, usage['volume'], usage['rd_req'],
+                                     usage['rd_bytes'], usage['wr_req'],
+                                     usage['wr_bytes'], usage['instance_id'],
+                                     last_refreshed=refreshed)
+
+    def _send_volume_usage_notifications(self, context, start_time):
+        """Queries vol usage cache table and sends a vol usage notification"""
+        # We might have had a quick attach/detach that we missed in
+        # the last run of get_all_volume_usage and this one
+        # but detach stats will be recorded in db and returned from
+        # vol_get_usage_by_time
+        vol_usages = self.db.vol_get_usage_by_time(context, start_time)
+        for vol_usage in vol_usages:
+            notifier.notify(context, 'volume.%s' % self.host, 'volume.usage',
+                            notifier.INFO,
+                            compute_utils.usage_volume_info(vol_usage))
+
+    @manager.periodic_task
+    def _poll_volume_usage(self, context, start_time=None):
+        if CONF.volume_usage_poll_interval == 0:
+            return
+        else:
+            if not start_time:
+                start_time = utils.last_completed_audit_period()[1]
+
+            curr_time = time.time()
+            if (curr_time - self._last_vol_usage_poll) < \
+                    CONF.volume_usage_poll_interval:
+                return
+            else:
+                self._last_vol_usage_poll = curr_time
+                compute_host_bdms = self._get_host_volume_bdms(context,
+                                                               self.host)
+                if not compute_host_bdms:
+                    return
+                else:
+                    LOG.debug(_("Updating volume usage cache"))
+                    try:
+                        vol_usages = self.driver.get_all_volume_usage(context,
+                              compute_host_bdms)
+                    except NotImplementedError:
+                        return
+
+                    refreshed = timeutils.utcnow()
+                    self._update_volume_usage_cache(context, vol_usages,
+                                                    refreshed)
+
+                self._send_volume_usage_notifications(context, start_time)
+
     @manager.periodic_task
     def _report_driver_status(self, context):
         curr_time = time.time()
@@ -3006,8 +3106,8 @@ class ComputeManager(manager.SchedulerDependentManager):
             # for example, because of a broken libvirt driver.
             # We re-query the DB to get the latest instance info to minimize
             # (not eliminate) race condition.
-            u = self.db.instance_get_by_uuid(context,
-                                             db_instance['uuid'])
+            u = self.conductor_api.instance_get_by_uuid(context,
+                                                        db_instance['uuid'])
             db_power_state = u["power_state"]
             vm_state = u['vm_state']
             if self.host != u['host']:
@@ -3239,9 +3339,10 @@ class ComputeManager(manager.SchedulerDependentManager):
                                          slave_info=slave_info)
         except exception.AggregateError:
             with excutils.save_and_reraise_exception():
-                self.driver.undo_aggregate_operation(context,
-                                               self.db.aggregate_host_delete,
-                                               aggregate['id'], host)
+                self.driver.undo_aggregate_operation(
+                                    context,
+                                    self.conductor_api.aggregate_host_delete,
+                                    aggregate, host)
 
     @exception.wrap_exception(notifier=notifier, publisher_id=publisher_id())
     def remove_aggregate_host(self, context, host, slave_info=None,
@@ -3257,8 +3358,9 @@ class ComputeManager(manager.SchedulerDependentManager):
                 exception.InvalidAggregateAction) as e:
             with excutils.save_and_reraise_exception():
                 self.driver.undo_aggregate_operation(
-                                    context, self.db.aggregate_host_add,
-                                    aggregate['id'], host,
+                                    context,
+                                    self.conductor_api.aggregate_host_add,
+                                    aggregate, host,
                                     isinstance(e, exception.AggregateError))
 
     @manager.periodic_task(

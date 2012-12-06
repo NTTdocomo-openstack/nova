@@ -43,7 +43,6 @@ import errno
 import functools
 import glob
 import hashlib
-import multiprocessing
 import os
 import shutil
 import sys
@@ -68,6 +67,7 @@ from nova.openstack.common import fileutils
 from nova.openstack.common import importutils
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
+from nova.openstack.common.notifier import api as notifier
 from nova import utils
 from nova.virt import configdrive
 from nova.virt.disk import api as disk
@@ -400,10 +400,22 @@ class LibvirtDriver(driver.ComputeDriver):
                 _connect_auth_cb,
                 None]
 
-        if read_only:
-            return libvirt.openReadOnly(uri)
-        else:
-            return libvirt.openAuth(uri, auth, 0)
+        try:
+            if read_only:
+                return libvirt.openReadOnly(uri)
+            else:
+                return libvirt.openAuth(uri, auth, 0)
+        except libvirt.libvirtError as ex:
+            LOG.exception(_("Connection to libvirt failed: %s"), ex)
+            payload = dict(ip=LibvirtDriver.get_host_ip_addr(),
+                           method='_connect',
+                           reason=ex)
+            notifier.notify(nova_context.get_admin_context(),
+                            notifier.publisher_id('compute'),
+                            'compute.libvirt.error',
+                            notifier.ERROR,
+                            payload)
+            pass
 
     def get_num_instances(self):
         """Efficient override of base instance_exists method."""
@@ -1995,21 +2007,18 @@ class LibvirtDriver(driver.ComputeDriver):
 
         return interfaces
 
-    @staticmethod
-    def get_vcpu_total():
+    def get_vcpu_total(self):
         """Get vcpu number of physical computer.
 
         :returns: the number of cpu core.
 
         """
 
-        # On certain platforms, this will raise a NotImplementedError.
         try:
-            return multiprocessing.cpu_count()
-        except NotImplementedError:
+            return self._conn.getInfo()[2]
+        except libvirt.libvirtError:
             LOG.warn(_("Cannot get the number of cpu, because this "
-                       "function is not implemented for this platform. "
-                       "This error can be safely ignored for now."))
+                       "function is not implemented for this platform. "))
             return 0
 
     def get_memory_mb_total(self):
@@ -2194,12 +2203,50 @@ class LibvirtDriver(driver.ComputeDriver):
         # data format needs to be standardized across drivers
         return jsonutils.dumps(cpu_info)
 
+    def get_all_volume_usage(self, context, compute_host_bdms):
+        """Return usage info for volumes attached to vms on
+           a given host"""
+        vol_usage = []
+
+        for instance_bdms in compute_host_bdms:
+            instance = instance_bdms['instance']
+
+            for bdm in instance_bdms['instance_bdms']:
+                vol_stats = []
+                mountpoint = bdm['device_name']
+                if mountpoint.startswith('/dev/'):
+                    mountpoint = mountpoint[5:]
+
+                LOG.debug(_("Trying to get stats for the volume %s"),
+                            bdm['volume_id'])
+                vol_stats = self.block_stats(instance['name'], mountpoint)
+
+                if vol_stats:
+                    rd_req, rd_bytes, wr_req, wr_bytes, flush_ops = vol_stats
+                    vol_usage.append(dict(volume=bdm['volume_id'],
+                                          instance_id=instance['id'],
+                                          rd_req=rd_req,
+                                          rd_bytes=rd_bytes,
+                                          wr_req=wr_req,
+                                          wr_bytes=wr_bytes,
+                                          flush_operations=flush_ops))
+        return vol_usage
+
     def block_stats(self, instance_name, disk):
         """
         Note that this function takes an instance name.
         """
-        domain = self._lookup_by_name(instance_name)
-        return domain.blockStats(disk)
+        try:
+            domain = self._lookup_by_name(instance_name)
+            return domain.blockStats(disk)
+        except libvirt.libvirtError as e:
+            errcode = e.get_error_code()
+            LOG.info(_("Getting block stats failed, device might have "
+                       "been detached. Code=%(errcode)s Error=%(e)s")
+                       % locals())
+        except exception.InstanceNotFound:
+            LOG.info(_("Could not find domain in libvirt for instance %s. "
+                       "Cannot get block stats for device") % instance_name)
 
     def interface_stats(self, instance_name, interface):
         """
@@ -3029,7 +3076,7 @@ class LibvirtDriver(driver.ComputeDriver):
         """Remove a compute host from an aggregate."""
         pass
 
-    def undo_aggregate_operation(self, context, op, aggregate_id,
+    def undo_aggregate_operation(self, context, op, aggregate,
                                   host, set_error=True):
         """only used for Resource Pools"""
         pass

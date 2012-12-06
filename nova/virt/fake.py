@@ -248,6 +248,13 @@ class FakeDriver(driver.ComputeDriver):
         bw = []
         return bw
 
+    def get_all_volume_usage(self, context, instances, start_time,
+                             stop_time=None):
+        """Return usage info for volumes attached to vms on
+           a given host"""
+        volusage = []
+        return volusage
+
     def block_stats(self, instance_name, disk_id):
         return [0L, 0L, 0L, 0L, None]
 
@@ -364,16 +371,20 @@ class FakeDriver(driver.ComputeDriver):
 
     def host_power_action(self, host, action):
         """Reboots, shuts down or powers up the host."""
-        pass
+        return action
 
     def host_maintenance_mode(self, host, mode):
         """Start/Stop host maintenance window. On start, it triggers
         guest VMs evacuation."""
-        pass
+        if not mode:
+            return 'off_maintenance'
+        return 'on_maintenance'
 
     def set_host_enabled(self, host, enabled):
         """Sets the specified host's ability to accept new instances."""
-        pass
+        if enabled:
+            return 'enabled'
+        return 'disabled'
 
     def get_disk_available_least(self):
         """ """

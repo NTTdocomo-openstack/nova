@@ -306,6 +306,24 @@ class LinuxNetworkTestCase(test.TestCase):
 
         self.assertEquals(actual_hosts, expected)
 
+    def test_get_dns_hosts_for_nw00(self):
+        expected = (
+                "192.168.0.100\tfake_instance00.novalocal\n"
+                "192.168.1.101\tfake_instance01.novalocal\n"
+                "192.168.0.102\tfake_instance00.novalocal"
+        )
+        actual_hosts = self.driver.get_dns_hosts(self.context, networks[0])
+        self.assertEquals(actual_hosts, expected)
+
+    def test_get_dns_hosts_for_nw01(self):
+        expected = (
+                "192.168.1.100\tfake_instance00.novalocal\n"
+                "192.168.0.101\tfake_instance01.novalocal\n"
+                "192.168.1.102\tfake_instance01.novalocal"
+        )
+        actual_hosts = self.driver.get_dns_hosts(self.context, networks[1])
+        self.assertEquals(actual_hosts, expected)
+
     def test_get_dhcp_opts_for_nw00(self):
         expected_opts = 'NW-3,3\nNW-4,3'
         actual_opts = self.driver.get_dhcp_opts(self.context, networks[0])
@@ -331,6 +349,12 @@ class LinuxNetworkTestCase(test.TestCase):
                              '192.168.0.100'])
         data = get_associated(self.context, 0)[0]
         actual = self.driver._host_dhcp(data)
+        self.assertEquals(actual, expected)
+
+    def test_host_dns_without_default_gateway_network(self):
+        expected = "192.168.0.100\tfake_instance00.novalocal"
+        data = get_associated(self.context, 0)[0]
+        actual = self.driver._host_dns(data)
         self.assertEquals(actual, expected)
 
     def test_linux_bridge_driver_plug(self):
@@ -405,6 +429,70 @@ class LinuxNetworkTestCase(test.TestCase):
         self.flags(flat_interface="override_interface")
         driver.plug(network, "fakemac")
         self.assertEqual(info['passed_interface'], "override_interface")
+
+    def test_isolated_host(self):
+        self.flags(fake_network=False,
+                   share_dhcp_address=True)
+        # NOTE(vish): use a fresh copy of the manager for each test
+        self.stubs.Set(linux_net, 'iptables_manager',
+                       linux_net.IptablesManager())
+        self.stubs.Set(linux_net, 'binary_name', 'test')
+        executes = []
+        inputs = []
+
+        def fake_execute(*args, **kwargs):
+            executes.append(args)
+            process_input = kwargs.get('process_input')
+            if process_input:
+                inputs.append(process_input)
+            return "", ""
+
+        self.stubs.Set(utils, 'execute', fake_execute)
+
+        driver = linux_net.LinuxBridgeInterfaceDriver()
+
+        @classmethod
+        def fake_ensure(_self, bridge, interface, network, gateway):
+            return bridge
+
+        self.stubs.Set(linux_net.LinuxBridgeInterfaceDriver,
+                       'ensure_bridge', fake_ensure)
+
+        iface = 'eth0'
+        dhcp = '192.168.1.1'
+        network = {'dhcp_server': dhcp,
+                   'bridge': 'br100',
+                   'bridge_interface': iface}
+        driver.plug(network, 'fakemac')
+        expected = [
+            ('ebtables', '-D', 'INPUT', '-p', 'ARP', '-i', iface,
+             '--arp-ip-dst', dhcp, '-j', 'DROP'),
+            ('ebtables', '-I', 'INPUT', '-p', 'ARP', '-i', iface,
+             '--arp-ip-dst', dhcp, '-j', 'DROP'),
+            ('ebtables', '-D', 'OUTPUT', '-p', 'ARP', '-o', iface,
+             '--arp-ip-src', dhcp, '-j', 'DROP'),
+            ('ebtables', '-I', 'OUTPUT', '-p', 'ARP', '-o', iface,
+             '--arp-ip-src', dhcp, '-j', 'DROP'),
+            ('iptables-save', '-c', '-t', 'filter'),
+            ('iptables-restore', '-c'),
+            ('iptables-save', '-c', '-t', 'nat'),
+            ('iptables-restore', '-c'),
+            ('ip6tables-save', '-c', '-t', 'filter'),
+            ('ip6tables-restore', '-c'),
+        ]
+        self.assertEqual(executes, expected)
+        expected_inputs = [
+             '-A test-FORWARD -m physdev --physdev-in %s '
+             '-d 255.255.255.255 -p udp --dport 67 -j DROP' % iface,
+             '-A test-FORWARD -m physdev --physdev-out %s '
+             '-d 255.255.255.255 -p udp --dport 67 -j DROP' % iface,
+             '-A test-FORWARD -m physdev --physdev-in %s '
+             '-d 192.168.1.1 -j DROP' % iface,
+             '-A test-FORWARD -m physdev --physdev-out %s '
+             '-s 192.168.1.1 -j DROP' % iface,
+        ]
+        for inp in expected_inputs:
+            self.assertTrue(inp in inputs[0])
 
     def _test_initialize_gateway(self, existing, expected, routes=''):
         self.flags(fake_network=False)

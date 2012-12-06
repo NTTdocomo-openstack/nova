@@ -729,6 +729,15 @@ def get_dhcp_hosts(context, network_ref):
     return '\n'.join(hosts)
 
 
+def get_dns_hosts(context, network_ref):
+    """Get network's DNS hosts in hosts format."""
+    hosts = []
+    for data in db.network_get_associated_fixed_ips(context,
+                                                    network_ref['id']):
+        hosts.append(_host_dns(data))
+    return '\n'.join(hosts)
+
+
 def _add_dnsmasq_accept_rules(dev):
     """Allow DHCP and DNS traffic through to dnsmasq."""
     table = iptables_manager.ipv4['filter']
@@ -777,6 +786,12 @@ def release_dhcp(dev, address, mac_address):
 def update_dhcp(context, dev, network_ref):
     conffile = _dhcp_file(dev, 'conf')
     write_to_file(conffile, get_dhcp_hosts(context, network_ref))
+    restart_dhcp(context, dev, network_ref)
+
+
+def update_dns(context, dev, network_ref):
+    hostsfile = _dhcp_file(dev, 'hosts')
+    write_to_file(hostsfile, get_dns_hosts(context, network_ref))
     restart_dhcp(context, dev, network_ref)
 
 
@@ -858,6 +873,8 @@ def restart_dhcp(context, dev, network_ref):
            '--dhcp-hostsfile=%s' % _dhcp_file(dev, 'conf'),
            '--dhcp-script=%s' % CONF.dhcpbridge,
            '--leasefile-ro']
+    if network_ref['multi_host'] and not CONF.dns_server:
+        cmd += ['--no-hosts', '--addn-hosts=%s' % _dhcp_file(dev, 'hosts')]
     if CONF.dns_server:
         cmd += ['-h', '-R', '--server=%s' % CONF.dns_server]
 
@@ -945,6 +962,12 @@ def _host_dhcp(data):
                                data['address'])
 
 
+def _host_dns(data):
+    return '%s\t%s.%s' % (data['address'],
+                          data['instance_hostname'],
+                          CONF.dhcp_domain)
+
+
 def _host_dhcp_opts(data):
     """Return an empty gateway option."""
     return '%s,%s' % (_host_dhcp_network(data), 3)
@@ -967,7 +990,7 @@ def device_exists(device):
 
 
 def _dhcp_file(dev, kind):
-    """Return path to a pid, leases or conf file for a bridge/device."""
+    """Return path to a pid, leases, hosts or conf file for a bridge/device."""
     fileutils.ensure_tree(CONF.networks_path)
     return os.path.abspath('%s/nova-%s.%s' % (CONF.networks_path,
                                               dev,
@@ -1092,14 +1115,16 @@ class LinuxNetInterfaceDriver(object):
 class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
 
     def plug(self, network, mac_address, gateway=True):
-        if network.get('vlan', None) is not None:
+        vlan = network.get('vlan')
+        if vlan is not None:
             iface = CONF.vlan_interface or network['bridge_interface']
             LinuxBridgeInterfaceDriver.ensure_vlan_bridge(
-                           network['vlan'],
+                           vlan,
                            network['bridge'],
                            iface,
                            network,
                            mac_address)
+            iface = 'vlan%s' % vlan
         else:
             iface = CONF.flat_interface or network['bridge_interface']
             LinuxBridgeInterfaceDriver.ensure_bridge(
@@ -1107,6 +1132,8 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
                           iface,
                           network, gateway)
 
+        if CONF.share_dhcp_address:
+            isolate_dhcp_address(iface, network['dhcp_server'])
         # NOTE(vish): applying here so we don't get a lock conflict
         iptables_manager.apply()
         return network['bridge']
@@ -1232,6 +1259,41 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
                                      '--in-interface %s -j DROP' % bridge)
                 ipv4_filter.add_rule('FORWARD',
                                      '--out-interface %s -j DROP' % bridge)
+
+
+@lockutils.synchronized('ebtables', 'nova-', external=True)
+def ensure_ebtables_rules(rules):
+    for rule in rules:
+        cmd = ['ebtables', '-D'] + rule.split()
+        _execute(*cmd, check_exit_code=False, run_as_root=True)
+        cmd[1] = '-I'
+        _execute(*cmd, run_as_root=True)
+
+
+def isolate_dhcp_address(interface, address):
+    # block arp traffic to address accross the interface
+    rules = []
+    rules.append('INPUT -p ARP -i %s --arp-ip-dst %s -j DROP'
+                 % (interface, address))
+    rules.append('OUTPUT -p ARP -o %s --arp-ip-src %s -j DROP'
+                 % (interface, address))
+    # NOTE(vish): the above is not possible with iptables/arptables
+    ensure_ebtables_rules(rules)
+    # block dhcp broadcast traffic across the interface
+    ipv4_filter = iptables_manager.ipv4['filter']
+    ipv4_filter.add_rule('FORWARD',
+                         '-m physdev --physdev-in %s -d 255.255.255.255 '
+                         '-p udp --dport 67 -j DROP' % interface, top=True)
+    ipv4_filter.add_rule('FORWARD',
+                         '-m physdev --physdev-out %s -d 255.255.255.255 '
+                         '-p udp --dport 67 -j DROP' % interface, top=True)
+    # block ip traffic to address accross the interface
+    ipv4_filter.add_rule('FORWARD',
+                         '-m physdev --physdev-in %s -d %s -j DROP'
+                         % (interface, address), top=True)
+    ipv4_filter.add_rule('FORWARD',
+                         '-m physdev --physdev-out %s -s %s -j DROP'
+                         % (interface, address), top=True)
 
 
 # plugs interfaces using Open vSwitch

@@ -25,6 +25,7 @@ from nova import db
 from nova.db.sqlalchemy import models
 from nova import notifications
 from nova.openstack.common import jsonutils
+from nova.openstack.common import timeutils
 from nova import test
 
 
@@ -98,6 +99,53 @@ class ConductorTestCase(BaseTestCase):
                                                     'finished')
         self.assertEqual(migration['status'], 'finished')
 
+    def test_instance_get_by_uuid(self):
+        orig_instance = self._create_fake_instance()
+        copy_instance = self.conductor.instance_get_by_uuid(
+            self.context, orig_instance['uuid'])
+        self.assertEqual(orig_instance['name'],
+                         copy_instance['name'])
+
+    def test_instance_get_all_by_host(self):
+        orig_instance = jsonutils.to_primitive(self._create_fake_instance())
+        all_instances = self.conductor.instance_get_all_by_host(
+            self.context, orig_instance['host'])
+        self.assertEqual(orig_instance['name'],
+                         all_instances[0]['name'])
+
+    def _setup_aggregate_with_host(self):
+        aggregate_ref = db.aggregate_create(self.context.elevated(),
+                {'name': 'foo', 'availability_zone': 'foo'})
+
+        self.conductor.aggregate_host_add(self.context, aggregate_ref, 'bar')
+
+        aggregate_ref = db.aggregate_get(self.context.elevated(),
+                                         aggregate_ref['id'])
+
+        return aggregate_ref
+
+    def test_aggregate_host_add(self):
+        aggregate_ref = self._setup_aggregate_with_host()
+
+        self.assertTrue(any([host == 'bar'
+                             for host in aggregate_ref['hosts']]))
+
+        db.aggregate_delete(self.context.elevated(), aggregate_ref['id'])
+
+    def test_aggregate_host_delete(self):
+        aggregate_ref = self._setup_aggregate_with_host()
+
+        self.conductor.aggregate_host_delete(self.context, aggregate_ref,
+                'bar')
+
+        aggregate_ref = db.aggregate_get(self.context.elevated(),
+                aggregate_ref['id'])
+
+        self.assertFalse(any([host == 'bar'
+                              for host in aggregate_ref['hosts']]))
+
+        db.aggregate_delete(self.context.elevated(), aggregate_ref['id'])
+
 
 class ConductorRPCAPITestCase(ConductorTestCase):
     """Conductor RPC API Tests"""
@@ -156,7 +204,10 @@ class ConductorPolicyTest(test.TestCase):
         conductor = conductor_api.LocalAPI()
         updates = {}
         for key in conductor_manager.allowed_updates:
-            updates[key] = 'foo'
+            if key in conductor_manager.datetime_fields:
+                updates[key] = timeutils.utcnow()
+            else:
+                updates[key] = 'foo'
         conductor.instance_update(ctxt, 'fake-instance', **updates)
 
     def test_allowed_keys_are_real(self):

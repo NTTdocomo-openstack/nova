@@ -35,6 +35,8 @@ class NetworkAPI(rpc_proxy.RpcProxy):
         1.0 - Initial version.
         1.1 - Adds migrate_instance_[start|finish]
         1.2 - Make migrate_instance_[start|finish] a little more flexible
+        1.3 - Adds fanout cast update_dns for multi_host networks
+        1.4 - Add get_backdoor_port()
     '''
 
     #
@@ -104,8 +106,10 @@ class NetworkAPI(rpc_proxy.RpcProxy):
                 'get_instance_id_by_floating_address',
                 address=address))
 
-    def get_backdoor_port(self, ctxt):
-        return self.call(ctxt, self.make_msg('get_backdoor_port'))
+    def get_backdoor_port(self, ctxt, host):
+        return self.call(ctxt, self.make_msg('get_backdoor_port'),
+                         topic=rpc.queue_get_for(ctxt, self.topic, host),
+                         version='1.4')
 
     def get_vifs_by_instance(self, ctxt, instance_id):
         # NOTE(vish): When the db calls are converted to store network
@@ -239,6 +243,10 @@ class NetworkAPI(rpc_proxy.RpcProxy):
         return self.call(ctxt, self.make_msg('deallocate_fixed_ip',
                 address=address, host=host),
                 topic=rpc.queue_get_for(ctxt, self.topic, host))
+
+    def update_dns(self, ctxt, network_ids):
+        return self.fanout_cast(ctxt, self.make_msg('update_dns',
+                network_ids=network_ids), version='1.3')
 
     # NOTE(russellb): Ideally this would not have a prefix of '_' since it is
     # a part of the rpc API. However, this is how it was being called when the

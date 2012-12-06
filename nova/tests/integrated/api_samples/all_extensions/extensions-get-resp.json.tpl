@@ -73,6 +73,14 @@
             "updated": "%(timestamp)s"
         },
         {
+            "alias": "os-agents",
+            "description": "%(text)s",
+            "links": [],
+            "name": "Agents",
+            "namespace": "http://docs.openstack.org/compute/ext/agents/api/v2",
+            "updated": "%(timestamp)s"
+        },
+        {
             "alias": "os-availability-zone",
             "description": "%(text)s",
             "links": [],
@@ -94,6 +102,14 @@
             "links": [],
             "name": "Cloudpipe",
             "namespace": "http://docs.openstack.org/compute/ext/cloudpipe/api/v1.1",
+            "updated": "%(timestamp)s"
+        },
+        {
+            "alias": "os-cloudpipe-update",
+            "description": "%(text)s",
+            "links": [],
+            "name": "CloudpipeUpdate",
+            "namespace": "http://docs.openstack.org/compute/ext/cloudpipe-update/api/v2",
             "updated": "%(timestamp)s"
         },
         {

@@ -404,11 +404,11 @@ def migration_get_unconfirmed_by_dest_compute(context, confirm_window,
             confirm_window, dest_compute)
 
 
-def migration_get_in_progress_by_host(context, host):
-    """Finds all migrations for the given host that are not yet confirmed or
-    reverted.
+def migration_get_in_progress_by_host_and_node(context, host, node):
+    """Finds all migrations for the given host + node  that are not yet
+    confirmed or reverted.
     """
-    return IMPL.migration_get_in_progress_by_host(context, host)
+    return IMPL.migration_get_in_progress_by_host_and_node(context, host, node)
 
 
 ####################
@@ -1372,9 +1372,9 @@ def agent_build_get_by_triple(context, hypervisor, os, architecture):
             architecture)
 
 
-def agent_build_get_all(context):
+def agent_build_get_all(context, hypervisor=None):
     """Get all agent builds."""
-    return IMPL.agent_build_get_all(context)
+    return IMPL.agent_build_get_all(context, hypervisor)
 
 
 def agent_build_destroy(context, agent_update_id):
@@ -1428,6 +1428,24 @@ def instance_type_extra_specs_update_or_create(context, flavor_id,
     key/value pairs specified in the extra specs dict argument"""
     IMPL.instance_type_extra_specs_update_or_create(context, flavor_id,
                                                     extra_specs)
+
+
+###################
+
+
+def vol_get_usage_by_time(context, begin):
+    """Return volumes usage that have been updated after a specified time"""
+    return IMPL.vol_get_usage_by_time(context, begin)
+
+
+def vol_usage_update(context, id, rd_req, rd_bytes, wr_req, wr_bytes,
+                     instance_id, last_refreshed=None, update_totals=False):
+    """Update cached volume usage for a volume
+       Creates new record if needed."""
+    return IMPL.vol_usage_update(context, id, rd_req, rd_bytes, wr_req,
+                                 wr_bytes, instance_id,
+                                 last_refreshed=last_refreshed,
+                                 update_totals=update_totals)
 
 
 ###################

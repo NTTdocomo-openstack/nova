@@ -251,6 +251,11 @@ class ComputeDriver(object):
            running VM"""
         raise NotImplementedError()
 
+    def get_all_volume_usage(self, context, compute_host_bdms):
+        """Return usage info for volumes attached to vms on
+           a given host"""
+        raise NotImplementedError()
+
     def get_host_ip_addr(self):
         """
         Retrieves the IP address of the dom0
@@ -734,7 +739,7 @@ class ComputeDriver(object):
         """Remove a compute host from an aggregate."""
         raise NotImplementedError()
 
-    def undo_aggregate_operation(self, context, op, aggregate_id,
+    def undo_aggregate_operation(self, context, op, aggregate,
                                   host, set_error=True):
         """Undo for  Resource Pools"""
         raise NotImplementedError()

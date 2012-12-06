@@ -18,42 +18,69 @@ from nova import manager
 from nova import notifications
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
+from nova.openstack.common import timeutils
 
 
 LOG = logging.getLogger(__name__)
 
+# Instead of having a huge list of arguments to instance_update(), we just
+# accept a dict of fields to update and use this whitelist to validate it.
 allowed_updates = ['task_state', 'vm_state', 'expected_task_state',
                    'power_state', 'access_ip_v4', 'access_ip_v6',
-                   'launched_at', 'terminated_at', 'host',
+                   'launched_at', 'terminated_at', 'host', 'node',
                    'memory_mb', 'vcpus', 'root_gb', 'ephemeral_gb',
-                   'instance_type_id', 'root_device_name', 'host',
+                   'instance_type_id', 'root_device_name', 'launched_on',
                    'progress', 'vm_mode', 'default_ephemeral_device',
                    'default_swap_device', 'root_device_name',
                    ]
+
+# Fields that we want to convert back into a datetime object.
+datetime_fields = ['launched_at', 'terminated_at']
 
 
 class ConductorManager(manager.SchedulerDependentManager):
     """Mission: TBD"""
 
-    RPC_API_VERSION = '1.1'
+    RPC_API_VERSION = '1.3'
 
     def __init__(self, *args, **kwargs):
         super(ConductorManager, self).__init__(service_name='conductor',
                                                *args, **kwargs)
 
     def instance_update(self, context, instance_uuid, updates):
-        for key in updates:
+        for key, value in updates.iteritems():
             if key not in allowed_updates:
                 LOG.error(_("Instance update attempted for "
                             "'%(key)s' on %(instance_uuid)s") % locals())
                 raise KeyError("unexpected update keyword '%s'" % key)
+            if key in datetime_fields and isinstance(value, basestring):
+                updates[key] = timeutils.parse_strtime(value)
+
         old_ref, instance_ref = self.db.instance_update_and_get_original(
             context, instance_uuid, updates)
         notifications.send_update(context, old_ref, instance_ref)
         return jsonutils.to_primitive(instance_ref)
+
+    def instance_get_by_uuid(self, context, instance_uuid):
+        return jsonutils.to_primitive(
+            self.db.instance_get_by_uuid(context, instance_uuid))
+
+    def instance_get_all_by_host(self, context, host):
+        return jsonutils.to_primitive(
+            self.db.instance_get_all_by_host(context.elevated(), host))
 
     def migration_update(self, context, migration, status):
         migration_ref = self.db.migration_update(context.elevated(),
                                                  migration['id'],
                                                  {'status': status})
         return jsonutils.to_primitive(migration_ref)
+
+    def aggregate_host_add(self, context, aggregate, host):
+        host_ref = self.db.aggregate_host_add(context.elevated(),
+                aggregate['id'], host)
+
+        return jsonutils.to_primitive(host_ref)
+
+    def aggregate_host_delete(self, context, aggregate, host):
+        self.db.aggregate_host_delete(context.elevated(),
+                aggregate['id'], host)

@@ -46,6 +46,8 @@ from nova.openstack.common import timeutils
 from nova import service
 from nova import tests
 from nova.tests import fake_flags
+from nova.tests import policy_fixture
+from nova.tests import utils
 
 
 test_opts = [
@@ -156,10 +158,12 @@ class TestCase(testtools.TestCase):
         self._services = []
         self._modules = {}
         self.useFixture(EnvironmentVariable('http_proxy'))
+        self.policy = self.useFixture(policy_fixture.PolicyFixture())
 
     def tearDown(self):
         """Runs after each test method to tear down test environment."""
         try:
+            utils.cleanup_dns_managers()
             self.mox.UnsetStubs()
             self.stubs.UnsetAll()
             self.stubs.SmartUnsetAll()

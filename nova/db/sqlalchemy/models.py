@@ -635,6 +635,9 @@ class Migration(BASE, NovaBase):
     # NOTE(tr3buchet): the ____compute variables are instance['host']
     source_compute = Column(String(255))
     dest_compute = Column(String(255))
+    # nodes are equivalent to a compute node's 'hypvervisor_hostname'
+    source_node = Column(String(255))
+    dest_node = Column(String(255))
     # NOTE(tr3buchet): dest_host, btw, is an ip address
     dest_host = Column(String(255))
     old_instance_type_id = Column(Integer())
@@ -897,6 +900,9 @@ class Aggregate(BASE, NovaBase):
                              'Aggregate.deleted == False)',
                          backref='aggregates')
 
+    def _extra_keys(self):
+        return ['hosts', 'metadetails']
+
     @property
     def hosts(self):
         return [h.host for h in self._hosts]
@@ -930,6 +936,24 @@ class BandwidthUsage(BASE, NovaBase):
     bw_out = Column(BigInteger)
     last_ctr_in = Column(BigInteger)
     last_ctr_out = Column(BigInteger)
+
+
+class VolumeUsage(BASE, NovaBase):
+    """Cache for volume usage data pulled from the hypervisor"""
+    __tablename__ = 'volume_usage_cache'
+    id = Column(Integer, primary_key=True, nullable=False)
+    volume_id = Column(String(36), nullable=False)
+    instance_id = Column(Integer)
+    tot_last_refreshed = Column(DateTime)
+    tot_reads = Column(BigInteger, default=0)
+    tot_read_bytes = Column(BigInteger, default=0)
+    tot_writes = Column(BigInteger, default=0)
+    tot_write_bytes = Column(BigInteger, default=0)
+    curr_last_refreshed = Column(DateTime)
+    curr_reads = Column(BigInteger, default=0)
+    curr_read_bytes = Column(BigInteger, default=0)
+    curr_writes = Column(BigInteger, default=0)
+    curr_write_bytes = Column(BigInteger, default=0)
 
 
 class S3Image(BASE, NovaBase):

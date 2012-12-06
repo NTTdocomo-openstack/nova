@@ -1987,16 +1987,16 @@ def key_pair_create(context, values):
 @require_context
 def key_pair_destroy(context, user_id, name):
     authorize_user_context(context, user_id)
-    session = get_session()
-    with session.begin():
-        key_pair_ref = key_pair_get(context, user_id, name, session=session)
-        key_pair_ref.delete(session=session)
+    model_query(context, models.KeyPair).\
+             filter_by(user_id=user_id).\
+             filter_by(name=name).\
+             delete()
 
 
 @require_context
-def key_pair_get(context, user_id, name, session=None):
+def key_pair_get(context, user_id, name):
     authorize_user_context(context, user_id)
-    result = model_query(context, models.KeyPair, session=session).\
+    result = model_query(context, models.KeyPair).\
                      filter_by(user_id=user_id).\
                      filter_by(name=name).\
                      first()
@@ -2304,11 +2304,20 @@ def network_get_all_by_instance(context, instance_id):
 @require_admin_context
 def network_get_all_by_host(context, host):
     session = get_session()
+    fixed_host_filter = or_(models.FixedIp.host == host,
+                            models.Instance.host == host)
     fixed_ip_query = model_query(context, models.FixedIp.network_id,
                                  session=session).\
-                        filter(models.FixedIp.host == host)
+                     outerjoin((models.VirtualInterface,
+                           models.VirtualInterface.id ==
+                           models.FixedIp.virtual_interface_id)).\
+                     outerjoin((models.Instance,
+                           models.Instance.uuid ==
+                               models.VirtualInterface.instance_uuid)).\
+                     filter(fixed_host_filter)
     # NOTE(vish): return networks that have host set
     #             or that have a fixed ip with host set
+    #             or that have an instance with host set
     host_filter = or_(models.Network.host == host,
                       models.Network.id.in_(fixed_ip_query.subquery()))
     return _network_get_query(context, session=session).\
@@ -3394,11 +3403,14 @@ def migration_get_unconfirmed_by_dest_compute(context, confirm_window,
 
 
 @require_admin_context
-def migration_get_in_progress_by_host(context, host, session=None):
+def migration_get_in_progress_by_host_and_node(context, host, node,
+                                               session=None):
 
     return model_query(context, models.Migration, session=session).\
-            filter(or_(models.Migration.source_compute == host,
-                       models.Migration.dest_compute == host)).\
+            filter(or_(and_(models.Migration.source_compute == host,
+                            models.Migration.source_node == node),
+                       and_(models.Migration.dest_compute == host,
+                            models.Migration.dest_node == node))).\
             filter(~models.Migration.status.in_(['confirmed', 'reverted'])).\
             options(joinedload('instance')).\
             all()
@@ -3956,8 +3968,13 @@ def agent_build_get_by_triple(context, hypervisor, os, architecture,
 
 
 @require_admin_context
-def agent_build_get_all(context):
-    return model_query(context, models.AgentBuild, read_deleted="no").\
+def agent_build_get_all(context, hypervisor=None):
+    if hypervisor:
+        return model_query(context, models.AgentBuild, read_deleted="no").\
+                   filter_by(hypervisor=hypervisor).\
+                   all()
+    else:
+        return model_query(context, models.AgentBuild, read_deleted="no").\
                    all()
 
 
@@ -3965,12 +3982,15 @@ def agent_build_get_all(context):
 def agent_build_destroy(context, agent_build_id):
     session = get_session()
     with session.begin():
-        model_query(context, models.AgentBuild, session=session,
-                    read_deleted="yes").\
+        agent_build_ref = model_query(context, models.AgentBuild,
+                    session=session, read_deleted="yes").\
                 filter_by(id=agent_build_id).\
-                update({'deleted': True,
-                        'deleted_at': timeutils.utcnow(),
-                        'updated_at': literal_column('updated_at')})
+                first()
+        if not agent_build_ref:
+            raise exception.AgentBuildNotFound(id=agent_build_id)
+        agent_build_ref.update({'deleted': True,
+                                'deleted_at': timeutils.utcnow(),
+                                'updated_at': literal_column('updated_at')})
 
 
 @require_admin_context
@@ -3981,7 +4001,8 @@ def agent_build_update(context, agent_build_id, values):
                                       session=session, read_deleted="yes").\
                    filter_by(id=agent_build_id).\
                    first()
-
+        if not agent_build_ref:
+            raise exception.AgentBuildNotFound(id=agent_build_id)
         agent_build_ref.update(values)
         agent_build_ref.save(session=session)
 
@@ -4122,6 +4143,85 @@ def instance_type_extra_specs_update_or_create(context, flavor_id,
 ####################
 
 
+@require_context
+def vol_get_usage_by_time(context, begin):
+    """Return volumes usage that have been updated after a specified time"""
+    return model_query(context, models.VolumeUsage, read_deleted="yes").\
+                   filter(or_(models.VolumeUsage.tot_last_refreshed == None,
+                              models.VolumeUsage.tot_last_refreshed > begin,
+                              models.VolumeUsage.curr_last_refreshed == None,
+                              models.VolumeUsage.curr_last_refreshed > begin,
+                              )).\
+                              all()
+
+
+@require_context
+def vol_usage_update(context, id, rd_req, rd_bytes, wr_req, wr_bytes,
+                     instance_id, last_refreshed=None, update_totals=False,
+                     session=None):
+    if not session:
+        session = get_session()
+
+    if last_refreshed is None:
+        last_refreshed = timeutils.utcnow()
+
+    with session.begin():
+        values = {}
+        # NOTE(dricco): We will be mostly updating current usage records vs
+        # updating total or creating records. Optimize accordingly.
+        if not update_totals:
+            values = {'curr_last_refreshed': last_refreshed,
+                      'curr_reads': rd_req,
+                      'curr_read_bytes': rd_bytes,
+                      'curr_writes': wr_req,
+                      'curr_write_bytes': wr_bytes,
+                      'instance_id': instance_id}
+        else:
+            values = {'tot_last_refreshed': last_refreshed,
+                      'tot_reads': models.VolumeUsage.tot_reads + rd_req,
+                      'tot_read_bytes': models.VolumeUsage.tot_read_bytes +
+                                        rd_bytes,
+                      'tot_writes': models.VolumeUsage.tot_writes + wr_req,
+                      'tot_write_bytes': models.VolumeUsage.tot_write_bytes +
+                                         wr_bytes,
+                      'curr_reads': 0,
+                      'curr_read_bytes': 0,
+                      'curr_writes': 0,
+                      'curr_write_bytes': 0,
+                      'instance_id': instance_id}
+
+        rows = model_query(context, models.VolumeUsage,
+                           session=session, read_deleted="yes").\
+                           filter_by(volume_id=id).\
+                           update(values, synchronize_session=False)
+
+        if rows:
+            return
+
+        vol_usage = models.VolumeUsage()
+        vol_usage.tot_last_refreshed = timeutils.utcnow()
+        vol_usage.curr_last_refreshed = timeutils.utcnow()
+        vol_usage.volume_id = id
+
+        if not update_totals:
+            vol_usage.curr_reads = rd_req
+            vol_usage.curr_read_bytes = rd_bytes
+            vol_usage.curr_writes = wr_req
+            vol_usage.curr_write_bytes = wr_bytes
+        else:
+            vol_usage.tot_reads = rd_req
+            vol_usage.tot_read_bytes = rd_bytes
+            vol_usage.tot_writes = wr_req
+            vol_usage.tot_write_bytes = wr_bytes
+
+        vol_usage.save(session=session)
+
+    return
+
+
+####################
+
+
 def s3_image_get(context, image_id):
     """Find local s3 image represented by the provided id"""
     result = model_query(context, models.S3Image, read_deleted="yes").\
@@ -4161,10 +4261,20 @@ def s3_image_create(context, image_uuid):
 ####################
 
 
-def _aggregate_get_query(context, model_class, id_field, id,
+def _aggregate_get_query(context, model_class, id_field=None, id=None,
                          session=None, read_deleted=None):
-    return model_query(context, model_class, session=session,
-                       read_deleted=read_deleted).filter(id_field == id)
+    columns_to_join = {models.Aggregate: ['_hosts', '_metadata']}
+
+    query = model_query(context, model_class, session=session,
+                        read_deleted=read_deleted)
+
+    for c in columns_to_join.get(model_class, []):
+        query = query.options(joinedload(c))
+
+    if id and id_field:
+        query = query.filter(id_field == id)
+
+    return query
 
 
 @require_admin_context
@@ -4180,6 +4290,10 @@ def aggregate_create(context, values, metadata=None):
         aggregate = models.Aggregate()
         aggregate.update(values)
         aggregate.save(session=session)
+        # We don't want these to be lazy loaded later.  We know there is
+        # nothing here since we just created this aggregate.
+        aggregate._hosts = []
+        aggregate._metadata = []
     else:
         raise exception.AggregateNameExists(aggregate_name=values['name'])
     if metadata:
@@ -4202,8 +4316,8 @@ def aggregate_get(context, aggregate_id):
 
 @require_admin_context
 def aggregate_get_by_host(context, host, key=None):
-    query = model_query(context, models.Aggregate).join(
-            "_hosts").filter(models.AggregateHost.host == host)
+    query = _aggregate_get_query(context, models.Aggregate,
+            models.AggregateHost.host, host)
 
     if key:
         query = query.join("_metadata").filter(
@@ -4275,7 +4389,7 @@ def aggregate_delete(context, aggregate_id):
 
 @require_admin_context
 def aggregate_get_all(context):
-    return model_query(context, models.Aggregate).all()
+    return _aggregate_get_query(context, models.Aggregate).all()
 
 
 @require_admin_context

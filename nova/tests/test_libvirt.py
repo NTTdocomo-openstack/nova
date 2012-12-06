@@ -18,6 +18,7 @@
 import copy
 import errno
 import eventlet
+import fixtures
 import json
 import mox
 import os
@@ -73,6 +74,7 @@ CONF = cfg.CONF
 CONF.import_opt('compute_manager', 'nova.config')
 CONF.import_opt('host', 'nova.config')
 CONF.import_opt('my_ip', 'nova.config')
+CONF.import_opt('base_dir_name', 'nova.virt.libvirt.imagecache')
 LOG = logging.getLogger(__name__)
 
 _fake_network_info = fake_network.fake_get_instance_nw_info
@@ -473,11 +475,11 @@ class CacheConcurrencyTestCase(test.TestCase):
         self.stubs.Set(os.path, 'exists', fake_exists)
         self.stubs.Set(utils, 'execute', fake_execute)
         self.stubs.Set(imagebackend.disk, 'extend', fake_extend)
-        imagebackend.libvirt_utils = fake_libvirt_utils
+        self.useFixture(fixtures.MonkeyPatch(
+            'nova.virt.libvirt.imagebackend.libvirt_utils',
+            fake_libvirt_utils))
 
     def tearDown(self):
-        imagebackend.libvirt_utils = libvirt_utils
-
         # Make sure the lock_path for this test is cleaned up
         if os.path.exists(self.lock_path):
             shutil.rmtree(self.lock_path)
@@ -558,8 +560,12 @@ class LibvirtConnTestCase(test.TestCase):
         self.flags(instances_path='')
         self.flags(libvirt_snapshots_directory='')
         self.call_libvirt_dependant_setup = False
-        libvirt_driver.libvirt_utils = fake_libvirt_utils
-        snapshots.libvirt_utils = fake_libvirt_utils
+        self.useFixture(fixtures.MonkeyPatch(
+            'nova.virt.libvirt.driver.libvirt_utils',
+            fake_libvirt_utils))
+        self.useFixture(fixtures.MonkeyPatch(
+            'nova.virt.libvirt.snapshots.libvirt_utils',
+            fake_libvirt_utils))
 
         def fake_extend(image, size):
             pass
@@ -580,7 +586,6 @@ class LibvirtConnTestCase(test.TestCase):
                 'instance_type_id': '5'}  # m1.small
 
     def tearDown(self):
-        libvirt_driver.libvirt_utils = libvirt_utils
         nova.tests.image.fake.FakeImageService_reset()
         super(LibvirtConnTestCase, self).tearDown()
 
@@ -2334,7 +2339,6 @@ class LibvirtConnTestCase(test.TestCase):
 
             self.create_fake_libvirt_mock()
             libvirt_driver.LibvirtDriver._conn.lookupByName = fake_lookup
-            libvirt_driver.libvirt_utils = fake_libvirt_utils
 
             conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
 
@@ -2386,7 +2390,6 @@ class LibvirtConnTestCase(test.TestCase):
             libvirt_driver.LibvirtDriver._conn.lookupByName = fake_lookup
             libvirt_driver.LibvirtDriver._flush_libvirt_console = _fake_flush
             libvirt_driver.LibvirtDriver._append_to_file = _fake_append_to_file
-            libvirt_driver.libvirt_utils = fake_libvirt_utils
 
             conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
 
@@ -4208,6 +4211,56 @@ class LibvirtDriverTestCase(test.TestCase):
         self.mox.ReplayAll()
         self.libvirtconnection._cleanup_resize(ins_ref,
                                             _fake_network_info(self.stubs, 1))
+
+
+class LibvirtVolumeUsageTestCase(test.TestCase):
+    """Test for nova.virt.libvirt.libvirt_driver.LibvirtDriver
+       .get_all_volume_usage"""
+
+    def setUp(self):
+        super(LibvirtVolumeUsageTestCase, self).setUp()
+        self.conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        self.c = context.get_admin_context()
+
+        # creating instance
+        inst = {}
+        inst['uuid'] = '875a8070-d0b9-4949-8b31-104d125c9a64'
+        self.ins_ref = db.instance_create(self.c, inst)
+
+        # verify bootable volume device path also
+        self.bdms = [{'volume_id': 1,
+                      'device_name': '/dev/vde'},
+                     {'volume_id': 2,
+                      'device_name': 'vda'}]
+
+    def test_get_all_volume_usage(self):
+        def fake_block_stats(instance_name, disk):
+            return (169L, 688640L, 0L, 0L, -1L)
+
+        self.stubs.Set(self.conn, 'block_stats', fake_block_stats)
+        vol_usage = self.conn.get_all_volume_usage(self.c,
+              [dict(instance=self.ins_ref, instance_bdms=self.bdms)])
+
+        expected_usage = [{'volume': 1,
+                           'instance_id': 1,
+                           'rd_bytes': 688640L, 'wr_req': 0L,
+                           'flush_operations': -1L, 'rd_req': 169L,
+                           'wr_bytes': 0L},
+                           {'volume': 2,
+                            'instance_id': 1,
+                            'rd_bytes': 688640L, 'wr_req': 0L,
+                            'flush_operations': -1L, 'rd_req': 169L,
+                            'wr_bytes': 0L}]
+        self.assertEqual(vol_usage, expected_usage)
+
+    def test_get_all_volume_usage_device_not_found(self):
+        def fake_lookup(instance_name):
+            raise libvirt.libvirtError('invalid path')
+
+        self.stubs.Set(self.conn, '_lookup_by_name', fake_lookup)
+        vol_usage = self.conn.get_all_volume_usage(self.c,
+              [dict(instance=self.ins_ref, instance_bdms=self.bdms)])
+        self.assertEqual(vol_usage, [])
 
 
 class LibvirtNonblockingTestCase(test.TestCase):

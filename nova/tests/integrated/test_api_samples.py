@@ -26,6 +26,7 @@ from nova.cloudpipe.pipelib import CloudPipe
 from nova.compute import api
 from nova import context
 from nova import db
+from nova.db.sqlalchemy import models
 from nova.network.manager import NetworkManager
 from nova.openstack.common import cfg
 from nova.openstack.common import importutils
@@ -201,14 +202,46 @@ class ApiSampleTestBase(integrated_helpers._IntegratedTestBase):
                         '%(expected)s\n%(result)s') % locals())
         return matched_value
 
+    def _verify_something(self, subs, expected, data):
+        result = self._pretty_data(data)
+        result = self._objectify(result)
+        return self._compare_result(subs, expected, result)
+
+    def generalize_subs(self, subs, vanilla_regexes):
+        """Give the test a chance to modify subs after the server response
+        was verified, and before the on-disk doc/api_samples file is checked.
+        This may be needed by some tests to convert exact matches expected
+        from the server into pattern matches to verify what is in the
+        sample file.
+
+        If there are no changes to be made, subs is returned unharmed.
+        """
+        return subs
+
     def _verify_response(self, name, subs, response):
         expected = self._read_template(name)
         expected = self._objectify(expected)
-        result = self._pretty_data(response.read())
-        if self.generate_samples:
-            self._write_sample(name, result)
-        result = self._objectify(result)
-        return self._compare_result(subs, expected, result)
+        with file(self._get_sample(name)) as sample:
+            sample_data = sample.read()
+        response_data = response.read()
+
+        try:
+            response_result = self._verify_something(subs, expected,
+                                                     response_data)
+            # NOTE(danms): replace some of the subs with patterns for the
+            # doc/api_samples check, which won't have things like the
+            # correct compute host name. Also let the test do some of its
+            # own generalization, if necessary
+            vanilla_regexes = self._get_regexes()
+            subs['compute_host'] = vanilla_regexes['host_name']
+            subs['id'] = vanilla_regexes['id']
+            subs = self.generalize_subs(subs, vanilla_regexes)
+            self._verify_something(subs, expected, sample_data)
+            return response_result
+        except NoMatch:
+            if self.generate_samples:
+                self._write_sample(name, self._pretty_data(response_data))
+            raise
 
     def _get_host(self):
         return 'http://openstack.example.com'
@@ -264,8 +297,9 @@ class ApiSampleTestBase(integrated_helpers._IntegratedTestBase):
 
     def _do_post(self, url, name, subs, method='POST'):
         body = self._read_template(name) % subs
-        if self.generate_samples:
-            self._write_sample(name, body)
+        sample = self._get_sample(name)
+        if self.generate_samples and not os.path.exists(sample):
+                self._write_sample(name, body)
         return self._get_response(url, method, body)
 
     def _do_put(self, url, name, subs):
@@ -352,6 +386,10 @@ class ServersMetadataJsonTest(ServersSampleBase):
         self._verify_response('server-metadata-all-resp', subs, response)
 
         return uuid
+
+    def generalize_subs(self, subs, vanilla_regexes):
+        subs['value'] = '(Foo|Bar) Value'
+        return subs
 
     def test_metadata_put_all(self):
         """Test setting all metadata for a server"""
@@ -462,13 +500,41 @@ class FlavorsSampleXmlTest(FlavorsSampleJsonTest):
 class HostsSampleJsonTest(ApiSampleTestBase):
     extension_name = "nova.api.openstack.compute.contrib.hosts.Hosts"
 
+    def test_host_startup(self):
+        response = self._do_get('os-hosts/%s/startup' % self.compute.host)
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        return self._verify_response('host-get-startup', subs, response)
+
+    def test_host_reboot(self):
+        response = self._do_get('os-hosts/%s/reboot' % self.compute.host)
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        return self._verify_response('host-get-reboot', subs, response)
+
+    def test_host_shutdown(self):
+        response = self._do_get('os-hosts/%s/shutdown' % self.compute.host)
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        return self._verify_response('host-get-shutdown', subs, response)
+
+    def test_host_maintenance(self):
+        response = self._do_put('os-hosts/%s' % self.compute.host,
+                                'host-put-maintenance-req', {})
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        return self._verify_response('host-put-maintenance-resp', subs,
+                                     response)
+
     def test_host_get(self):
         response = self._do_get('os-hosts/%s' % self.compute.host)
+        self.assertEqual(response.status, 200)
         subs = self._get_regexes()
         return self._verify_response('host-get-resp', subs, response)
 
     def test_hosts_list(self):
         response = self._do_get('os-hosts')
+        self.assertEqual(response.status, 200)
         subs = self._get_regexes()
         return self._verify_response('hosts-list-resp', subs, response)
 
@@ -613,7 +679,7 @@ class ServersActionsJsonTest(ServersSampleBase):
                                  'server-action-rebuild-resp')
 
     def test_server_resize(self):
-        CONF.allow_resize_to_same_host = True
+        self.flags(allow_resize_to_same_host=True)
         uuid = self._post_server()
         self._test_server_action(uuid, "resize",
                                  {"id": 2,
@@ -1021,6 +1087,10 @@ class FloatingIpsBulkXmlTest(FloatingIpsBulkJsonTest):
 class KeyPairsSampleJsonTest(ApiSampleTestBase):
     extension_name = "nova.api.openstack.compute.contrib.keypairs.Keypairs"
 
+    def generalize_subs(self, subs, vanilla_regexes):
+        subs['keypair_name'] = 'keypair-[0-9a-f-]+'
+        return subs
+
     def test_keypairs_post(self, public_key=None):
         """Get api sample of key pairs post request"""
         key_name = 'keypair-' + str(uuid.uuid4())
@@ -1155,9 +1225,13 @@ class CloudPipeSampleJsonTest(ApiSampleTestBase):
         self.stubs.Set(CloudPipe, 'get_encoded_zip', get_user_data)
         self.stubs.Set(NetworkManager, "get_network", network_api_get)
 
+    def generalize_subs(self, subs, vanilla_regexes):
+        subs['project_id'] = 'cloudpipe-[0-9a-f-]+'
+        return subs
+
     def test_cloud_pipe_create(self):
         """Get api samples of cloud pipe extension creation"""
-        CONF.vpn_image_id = fake.get_valid_image_id()
+        self.flags(vpn_image_id=fake.get_valid_image_id())
         project = {'project_id': 'cloudpipe-' + str(uuid.uuid4())}
         response = self._do_post('os-cloudpipe', 'cloud-pipe-create-req',
                                  project)
@@ -1180,6 +1254,137 @@ class CloudPipeSampleJsonTest(ApiSampleTestBase):
 
 
 class CloudPipeSampleXmlTest(CloudPipeSampleJsonTest):
+    ctype = "xml"
+
+
+class CloudPipeUpdateJsonTest(ApiSampleTestBase):
+    extension_name = ("nova.api.openstack.compute.contrib"
+                      ".cloudpipe_update.Cloudpipe_update")
+
+    def _get_flags(self):
+        f = super(CloudPipeUpdateJsonTest, self)._get_flags()
+        f['osapi_compute_extension'] = CONF.osapi_compute_extension[:]
+        # Cloudpipe_update also needs cloudpipe to be loaded
+        f['osapi_compute_extension'].append(
+            'nova.api.openstack.compute.contrib.cloudpipe.Cloudpipe')
+        return f
+
+    def setUp(self):
+        super(CloudPipeUpdateJsonTest, self).setUp()
+
+    def test_cloud_pipe_update(self):
+        subs = {'vpn_ip': '192.168.1.1',
+                'vpn_port': 2000}
+        response = self._do_put('os-cloudpipe/configure-project',
+                                'cloud-pipe-update-req',
+                                subs)
+        self.assertEqual(response.status, 202)
+
+
+class CloudPipeUpdateXmlTest(CloudPipeUpdateJsonTest):
+    ctype = "xml"
+
+
+class AgentsJsonTest(ApiSampleTestBase):
+    extension_name = "nova.api.openstack.compute.contrib.agents.Agents"
+
+    def _get_flags(self):
+        f = super(AgentsJsonTest, self)._get_flags()
+        f['osapi_compute_extension'] = CONF.osapi_compute_extension[:]
+        return f
+
+    def setUp(self):
+        super(AgentsJsonTest, self).setUp()
+
+        fake_agents_list = [{'url': 'xxxxxxxxxxxx',
+                             'hypervisor': 'hypervisor',
+                             'architecture': 'x86',
+                             'os': 'os',
+                             'version': '8.0',
+                             'md5hash': 'add6bb58e139be103324d04d82d8f545',
+                             'id': '1'}]
+
+        def fake_agent_build_create(context, values):
+            values['id'] = '1'
+            agent_build_ref = models.AgentBuild()
+            agent_build_ref.update(values)
+            return agent_build_ref
+
+        def fake_agent_build_get_all(context, hypervisor):
+            agent_build_all = []
+            for agent in fake_agents_list:
+                if hypervisor and hypervisor != agent['hypervisor']:
+                    continue
+                agent_build_ref = models.AgentBuild()
+                agent_build_ref.update(agent)
+                agent_build_all.append(agent_build_ref)
+            return agent_build_all
+
+        def fake_agent_build_update(context, agent_build_id, values):
+            pass
+
+        def fake_agent_build_destroy(context, agent_update_id):
+            pass
+
+        self.stubs.Set(db, "agent_build_create",
+                       fake_agent_build_create)
+        self.stubs.Set(db, "agent_build_get_all",
+                       fake_agent_build_get_all)
+        self.stubs.Set(db, "agent_build_update",
+                       fake_agent_build_update)
+        self.stubs.Set(db, "agent_build_destroy",
+                       fake_agent_build_destroy)
+
+    def test_agent_create(self):
+        """Creates a new agent build."""
+        project = {'url': 'xxxxxxxxxxxx',
+                'hypervisor': 'hypervisor',
+                'architecture': 'x86',
+                'os': 'os',
+                'version': '8.0',
+                'md5hash': 'add6bb58e139be103324d04d82d8f545'
+                }
+        response = self._do_post('os-agents', 'agent-post-req',
+                                 project)
+        self.assertEqual(response.status, 200)
+        project['agent_id'] = 1
+        self._verify_response('agent-post-resp', project, response)
+        return project
+
+    def test_agent_list(self):
+        """ Return a list of all agent builds."""
+        response = self._do_get('os-agents')
+        self.assertEqual(response.status, 200)
+        project = {'url': 'xxxxxxxxxxxx',
+                'hypervisor': 'hypervisor',
+                'architecture': 'x86',
+                'os': 'os',
+                'version': '8.0',
+                'md5hash': 'add6bb58e139be103324d04d82d8f545',
+                'agent_id': 1
+                }
+        return self._verify_response('agents-get-resp', project, response)
+
+    def test_agent_update(self):
+        """Update an existing agent build."""
+        agent_id = 1
+        subs = {'version': '7.0',
+                'url': 'xxx://xxxx/xxx/xxx',
+                'md5hash': 'add6bb58e139be103324d04d82d8f545'}
+        response = self._do_put('os-agents/%s' % agent_id,
+                                'agent-update-put-req', subs)
+        self.assertEqual(response.status, 200)
+        subs['agent_id'] = 1
+        return self._verify_response('agent-update-put-resp', subs, response)
+
+    def test_agent_delete(self):
+        """Deletes an existing agent build."""
+        agent_id = 1
+        response = self._do_delete('os-agents/%s' % agent_id)
+        self.assertEqual(response.status, 200)
+
+
+class AgentsXmlTest(AgentsJsonTest):
     ctype = "xml"
 
 
@@ -1559,5 +1764,91 @@ class ConsolesSampleJsonTests(ServersSampleBase):
                                        subs, response)
 
 
-class ConsoleOutputSampleXmlTests(ConsoleOutputSampleJsonTest):
+class ConsolesSampleXmlTests(ConsolesSampleJsonTests):
+        ctype = 'xml'
+
+
+class DeferredDeleteSampleJsonTests(ServersSampleBase):
+    extension_name = ("nova.api.openstack.compute.contrib"
+                                     ".deferred_delete.Deferred_delete")
+
+    def setUp(self):
+        super(DeferredDeleteSampleJsonTests, self).setUp()
+        self.flags(reclaim_instance_interval=1)
+
+    def test_restore(self):
+        uuid = self._post_server()
+        response = self._do_delete('servers/%s' % uuid)
+
+        response = self._do_post('servers/%s/action' % uuid,
+                                 'restore-post-req', {})
+        self.assertEqual(response.status, 202)
+        self.assertEqual(response.read(), '')
+
+    def test_force_delete(self):
+        uuid = self._post_server()
+        response = self._do_delete('servers/%s' % uuid)
+
+        response = self._do_post('servers/%s/action' % uuid,
+                                 'force-delete-post-req', {})
+        self.assertEqual(response.status, 202)
+        self.assertEqual(response.read(), '')
+
+
+class DeferredDeleteSampleXmlTests(DeferredDeleteSampleJsonTests):
+        ctype = 'xml'
+
+
+class QuotasSampleJsonTests(ApiSampleTestBase):
+    extension_name = "nova.api.openstack.compute.contrib.quotas.Quotas"
+
+    def test_show_quotas(self):
+        """Get api sample to show quotas"""
+        response = self._do_get('os-quota-sets/fake_tenant')
+        self.assertEqual(response.status, 200)
+        return self._verify_response('quotas-show-get-resp', {}, response)
+
+    def test_show_quotas_defaults(self):
+        """Get api sample to show quotas defaults"""
+        response = self._do_get('os-quota-sets/fake_tenant/defaults')
+        self.assertEqual(response.status, 200)
+        return self._verify_response('quotas-show-defaults-get-resp',
+                                     {}, response)
+
+    def test_update_quotas(self):
+        """Get api sample to update quotas"""
+        response = self._do_put('os-quota-sets/fake_tenant',
+                                'quotas-update-post-req',
+                                {})
+        self.assertEqual(response.status, 200)
+        return self._verify_response('quotas-update-post-resp', {}, response)
+
+
+class QuotasSampleXmlTests(QuotasSampleJsonTests):
+    ctype = "xml"
+
+
+class ExtendedStatusSampleJsonTests(ServersSampleBase):
+    extension_name = ("nova.api.openstack.compute.contrib"
+                                     ".extended_status.Extended_status")
+
+    def test_show(self):
+        uuid = self._post_server()
+        response = self._do_get('servers')
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        subs['id'] = uuid
+        return self._verify_response('servers-list-resp', subs, response)
+
+    def test_detail(self):
+        uuid = self._post_server()
+        response = self._do_get('servers/detail')
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        subs['id'] = uuid
+        subs['hostid'] = '[a-f0-9]+'
+        return self._verify_response('servers-detail-resp', subs, response)
+
+
+class ExtendedStatusSampleXmlTests(ExtendedStatusSampleJsonTests):
         ctype = 'xml'
