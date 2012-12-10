@@ -125,7 +125,7 @@ class TILERA(base.NodeDriver):
                            searchList=[{'interfaces': nets,
                                         'use_ipv6': CONF.use_ipv6,
                                         }]))
-        bootif_name = "eth0"
+        bootif_name = "eth%d" % len(network_info)
         net += "\n"
         net += "auto %s\n" % bootif_name
         net += "iface %s inet dhcp\n" % bootif_name
