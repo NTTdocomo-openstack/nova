@@ -80,7 +80,7 @@ def _console_pid(node_id):
             return int(pidstr)
         except ValueError:
             pass
-        LOG.warn("pidfile %s does not contain any pid", pidfile)
+        LOG.warn(_("pidfile %s does not contain any pid"), pidfile)
     return None
 
 
@@ -113,31 +113,31 @@ class Ipmi(base.PowerManager):
         self._interface = "lanplus"
         self._terminal_port = node['terminal_port']
         if self._address == None:
-            raise IpmiError(-1, "address is None")
+            raise IpmiError(-1, _("address is None"))
         if self._user == None:
-            raise IpmiError(-1, "user is None")
+            raise IpmiError(-1, _("user is None"))
         if self._password == None:
-            raise IpmiError(-1, "password is None")
+            raise IpmiError(-1, _("password is None"))
 
     def _exec_ipmitool(self, command):
+        args = ['ipmitool',
+                '-I',
+                self._interface,
+                '-H',
+                self._address,
+                '-U',
+                self._user,
+                '-f']
+        pwfile = _make_password_file(self._password)
         try:
-            args = ['ipmitool',
-                    '-I',
-                    self._interface,
-                    '-H',
-                    self._address,
-                    '-U',
-                    self._user,
-                    '-f']
-            pwfile = _make_password_file(self._password)
             args.append(pwfile)
             args.extend(command.split(" "))
             out, err = utils.execute(*args, attempts=3)
+            LOG.debug(_("ipmitool stdout: '%(out)s', stderr: '%(err)%s'"),
+                      locals())
+            return out, err
         finally:
             bm_utils.unlink_without_raise(pwfile)
-        LOG.debug("out: %s", out)
-        LOG.debug("err: %s", err)
-        return out, err
 
     def _power(self, state):
         count = 0
@@ -148,7 +148,7 @@ class Ipmi(base.PowerManager):
             try:
                 self._exec_ipmitool("power %s" % state)
             except Exception:
-                LOG.exception("_power(%s) failed" % state)
+                LOG.exception(_("_power(%s) failed") % state)
             time.sleep(CONF.baremetal_ipmi_power_wait)
         if state == "on":
             return baremetal_states.ACTIVE

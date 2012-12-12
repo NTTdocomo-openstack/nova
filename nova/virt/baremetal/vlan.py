@@ -30,7 +30,7 @@ CONF = cfg.CONF
 def _execute(*cmd, **kwargs):
     """Wrapper around utils._execute for fake_network."""
     if CONF.fake_network:
-        LOG.debug('FAKE NET: %s', ' '.join(map(str, cmd)))
+        LOG.debug(_('FAKE NET: %s'), ' '.join(map(str, cmd)))
         return 'fake', 0
     else:
         return utils.execute(*cmd, **kwargs)

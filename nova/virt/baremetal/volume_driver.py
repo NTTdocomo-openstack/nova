@@ -31,7 +31,8 @@ from nova.virt.libvirt import utils as libvirt_utils
 opts = [
     cfg.BoolOpt('baremetal_use_unsafe_iscsi',
                  default=True,
-                 help='If a node dose not have an fixed PXE IP address, '
+                 help='Do not set this out of dev/test environments. '
+                      'If a node does not have an fixed PXE IP address, '
                       'volumes are exported with globally opened ACL'),
     cfg.StrOpt('baremetal_iscsi_iqn_prefix',
                default='iqn.2010-10.org.openstack.baremetal',
@@ -92,11 +93,11 @@ def _allow_iscsi_tgtadm(tid, address):
 def _delete_iscsi_export_tgtadm(tid):
     try:
         utils.execute('tgtadm', '--lld', 'iscsi',
-                  '--mode', 'logicalunit',
-                  '--op', 'delete',
-                  '--tid', tid,
-                  '--lun', '1',
-                  run_as_root=True)
+                      '--mode', 'logicalunit',
+                      '--op', 'delete',
+                      '--tid', tid,
+                      '--lun', '1',
+                      run_as_root=True)
     except exception.ProcessExecutionError:
         pass
     try:
@@ -148,7 +149,7 @@ def _get_next_tid():
                            run_as_root=True)
     last_tid = 0
     for line in out.split('\n'):
-        m = re.search(r'^Target ([0-9])+:', line)
+        m = re.search(r'^Target \d+:', line)
         if m:
             tid = int(m.group(1))
             if last_tid < tid:
@@ -161,7 +162,7 @@ def _find_tid(iqn):
                            '--mode', 'target',
                            '--op', 'show',
                            run_as_root=True)
-    pattern = r'^Target ([0-9])+: *' + re.escape(iqn)
+    pattern = r'^Target \d+: *' + re.escape(iqn)
     for line in out.split('\n'):
         m = re.search(pattern, line)
         if m:
@@ -231,12 +232,12 @@ class LibvirtVolumeDriver(VolumeDriver):
         if not pxe_ip:
             if not CONF.baremetal_use_unsafe_iscsi:
                 raise exception.NovaException(
-                        "No fixed PXE IP is associated to %s" % instance_name)
+                        _("No fixed PXE IP is associated to %s")
+                        % instance_name)
         mount_device = mountpoint.rpartition("/")[2]
-        conf = self._volume_driver_method('connect_volume',
-                                          connection_info,
-                                          mount_device)
-        LOG.debug("conf=%s", conf)
+        self._volume_driver_method('connect_volume',
+                                   connection_info,
+                                   mount_device)
         device_path = connection_info['data']['device_path']
         iqn = _get_iqn(instance_name, mountpoint)
         tid = _get_next_tid()
@@ -244,7 +245,13 @@ class LibvirtVolumeDriver(VolumeDriver):
         if pxe_ip:
             _allow_iscsi_tgtadm(tid, pxe_ip['address'])
         else:
-            # unsafe
+            # NOTE(NTTdocomo): Since nova-compute does not know the
+            # instance's initiator ip, it allows any initiators
+            # to connect to the volume. This means other bare-metal
+            # instances that are not attached the volume can connect
+            # to the volume. Do not set CONF.baremetal_use_unsafe_iscsi
+            # out of dev/test environments.
+            # TODO(NTTdocomo): support CHAP
             _allow_iscsi_tgtadm(tid, 'ALL')
         return True
 
@@ -257,7 +264,7 @@ class LibvirtVolumeDriver(VolumeDriver):
             if tid is not None:
                 _delete_iscsi_export_tgtadm(tid)
             else:
-                LOG.warn("tid for %s not found", iqn)
+                LOG.warn(_("tid for %s not found") % iqn)
         finally:
             self._volume_driver_method('disconnect_volume',
                                        connection_info,

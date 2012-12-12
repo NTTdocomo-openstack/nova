@@ -34,8 +34,10 @@ class BareMetalVIFDriver(VIFDriver):
         pass
 
     def plug(self, instance, vif):
-        LOG.debug("plug: instance_uuid=%s vif=%s", instance['uuid'], vif)
+        LOG.debug(_("plug: instance_uuid=%(uuid)s vif=%(vif)s"),
+                  {'uuid': instance['uuid'], 'vif': vif})
         network, mapping = vif
+        vif_uuid = mapping['vif_uuid']
         ctx = context.get_admin_context()
         node = bmdb.bm_node_get_by_instance_uuid(ctx, instance['uuid'])
 
@@ -44,10 +46,9 @@ class BareMetalVIFDriver(VIFDriver):
         pifs = bmdb.bm_interface_get_all_by_bm_node_id(ctx, node['id'])
         for pif in pifs:
             if not pif['vif_uuid']:
-                bmdb.bm_interface_set_vif_uuid(ctx, pif['id'],
-                                               mapping.get('vif_uuid'))
-                LOG.debug("pif:%s is plugged (vif_uuid=%s)",
-                          pif['id'], mapping.get('vif_uuid'))
+                bmdb.bm_interface_set_vif_uuid(ctx, pif['id'], vif_uuid)
+                LOG.debug(_("pif:%(id)s is plugged (vif_uuid=%(vif_uuid)s)"),
+                          {'id': pif['id'], 'vif_uuid': vif_uuid})
                 self._after_plug(instance, network, mapping, pif)
                 return
 
@@ -55,18 +56,20 @@ class BareMetalVIFDriver(VIFDriver):
         #             when there are no physical interfaces left?
         raise exception.NovaException(_(
                 "Baremetal node: %(id)s has no available physical interface"
-                " for virtual interface %(uuid)s")
-                % (node['id'], mapping['vif_uuid']))
+                " for virtual interface %(vif_uuid)s")
+                % {'id': node['id'], 'vif_uuid': vif_uuid})
 
     def unplug(self, instance, vif):
-        LOG.debug("unplug: instance_uuid=%s vif=%s", instance['uuid'], vif)
+        LOG.debug(_("unplug: instance_uuid=%(uuid)s vif=%(vif)s"),
+                  {'uuid': instance['uuid'], 'vif': vif})
         network, mapping = vif
+        vif_uuid = mapping['vif_uuid']
         ctx = context.get_admin_context()
         try:
-            pif = bmdb.bm_interface_get_by_vif_uuid(ctx, mapping['vif_uuid'])
+            pif = bmdb.bm_interface_get_by_vif_uuid(ctx, vif_uuid)
             bmdb.bm_interface_set_vif_uuid(ctx, pif['id'], None)
-            LOG.debug("pif:%s is unplugged (vif_uuid=%s)",
-                      pif['id'], mapping.get('vif_uuid'))
+            LOG.debug(_("pif:%(id)s is unplugged (vif_uuid=%(vif_uuid)s)"),
+                      {'id': pif['id'], 'vif_uuid': vif_uuid})
             self._after_unplug(instance, network, mapping, pif)
         except exception.NovaException:
-            LOG.warn("no pif for vif_uuid=%s" % mapping['vif_uuid'])
+            LOG.warn(_("no pif for vif_uuid=%s"), vif_uuid)

@@ -34,4 +34,4 @@ def unlink_without_raise(path):
     try:
         libvirt_utils.file_delete(path)
     except OSError:
-        LOG.exception("failed to unlink %s" % path)
+        LOG.exception(_("failed to unlink %s") % path)

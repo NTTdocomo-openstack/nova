@@ -73,9 +73,9 @@ class Pdu(base.PowerManager):
         self._address = node['pm_address']
         self._node_id = node['id']
         if self._address == None:
-            raise PduError(-1, "address is None")
+            raise PduError(-1, _("address is None"))
         if self._node_id == None:
-            raise PduError(-1, "node_id is None")
+            raise PduError(-1, _("node_id is None"))
 
     def _exec_status(self):
         LOG.debug(_("Before ping to the bare-metal node"))
@@ -122,7 +122,7 @@ class Pdu(base.PowerManager):
         while not self.is_power_on():
             count += 1
             if count > CONF.tile_power_retry:
-                LOG.exception("power_on failed")
+                LOG.exception(_("power_on failed"))
                 return baremetal_states.ERROR
             self._power_mgr(CONF.tile_pdu_off)
             self._power_mgr(CONF.tile_pdu_on)
@@ -133,7 +133,7 @@ class Pdu(base.PowerManager):
         try:
             self._power_mgr(CONF.tile_pdu_off)
         except Exception:
-            LOG.exception("power_off failed")
+            LOG.exception(_("power_off failed"))
             return baremetal_states.ERROR
         return baremetal_states.DELETED
 

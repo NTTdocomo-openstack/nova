@@ -164,20 +164,22 @@ class TILERA(base.NodeDriver):
         ami_id = str(image_meta['id'])
         fileutils.ensure_tree(image_root)
         image_path = os.path.join(image_root, 'disk')
-        LOG.debug("fetching image id=%s target=%s", ami_id, image_path)
+        LOG.debug(_("fetching image id=%(ami_id)s target=%(image_path)s"),
+                  locals())
 
         bm_utils.cache_image(context=context,
                              target=image_path,
                              image_id=ami_id,
                              user_id=instance['user_id'],
                              project_id=instance['project_id'])
-        LOG.debug("injecting to image id=%s target=%s", ami_id, image_path)
+        LOG.debug(_("injecting to image id=%(ami_id)s target=%(image_path)s"),
+                  locals())
         self._inject_to_image(context, image_path, node, instance,
                               network_info,
                               injected_files=injected_files,
                               admin_password=admin_password)
         var['image_path'] = image_path
-        LOG.debug("fetching images all done")
+        LOG.debug(_("fetching images all done"))
 
     def destroy_images(self, var, context, node, instance):
         image_root = var['image_root']
@@ -214,7 +216,7 @@ class TILERA(base.NodeDriver):
                "ifconfig xgbe0 hw ether " + mac_address +
                " - --wait --run - ifconfig xgbe0 " + ip_address +
                " - --wait --quit")
-        LOG.debug("cmd=%s", cmd)
+        LOG.debug(_("_network_set: cmd=%s"), cmd)
         subprocess.Popen(cmd, shell=True)
         time.sleep(CONF.tile_service_wait)
 
@@ -225,7 +227,7 @@ class TILERA(base.NodeDriver):
         cmd = (CONF.tile_monitor +
                " --resume --net " + node_ip + " --run - " +
                "/usr/sbin/sshd - --wait --quit")
-        LOG.debug("cmd=%s", cmd)
+        LOG.debug(_("_ssh_set: cmd=%s"), cmd)
         subprocess.Popen(cmd, shell=True)
         time.sleep(CONF.tile_service_wait)
 
@@ -249,8 +251,9 @@ class TILERA(base.NodeDriver):
         node_ip = node['pm_address']
         mac_address = node['prov_mac_address']
         user_data = instance['user_data']
-        LOG.debug("node_ip=%s mac=%s ip_address=%s ud=%s",
-            node_ip, mac_address, ip_address, user_data)
+        LOG.debug(_("node_ip=%(node_ip)s mac=%(mac_address)s "
+                    "ip_address=%(ip_address)s ud=%(user_data)s"),
+                  locals())
         try:
             self._network_set(node_ip, mac_address, ip_address)
             self._ssh_set(node_ip)

@@ -132,7 +132,8 @@ class BareMetalDriver(driver.ComputeDriver):
             keyval[1] = keyval[1].strip()
             extra_specs[keyval[0]] = keyval[1]
         if not 'cpu_arch' in extra_specs:
-            LOG.warning('cpu_arch is not found in instance_type_extra_specs')
+            LOG.warning(
+                    _('cpu_arch is not found in instance_type_extra_specs'))
             extra_specs['cpu_arch'] = ''
         self._extra_specs = extra_specs
 

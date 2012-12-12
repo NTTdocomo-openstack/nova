@@ -358,7 +358,8 @@ class PXE(base.NodeDriver):
         ami_id = str(image_meta['id'])
         fileutils.ensure_tree(image_root)
         image_path = os.path.join(image_root, 'disk')
-        LOG.debug("fetching image id=%s target=%s", ami_id, image_path)
+        LOG.debug(_("fetching image id=%(ami_id)s target=%(image_path)s"),
+                  locals())
 
         bm_utils.cache_image(context=context,
                              target=image_path,
@@ -366,13 +367,14 @@ class PXE(base.NodeDriver):
                              user_id=instance['user_id'],
                              project_id=instance['project_id'])
 
-        LOG.debug("injecting to image id=%s target=%s", ami_id, image_path)
+        LOG.debug(_("injecting to image id=%(ami_id)s target=%(image_path)s"),
+                  locals())
         self._inject_to_image(context, image_path, node,
                               instance, network_info,
                               injected_files=injected_files,
                               admin_password=admin_password)
         var['image_path'] = image_path
-        LOG.debug("fetching images all done")
+        LOG.debug(_("fetching images all done"))
 
     def destroy_images(self, var, context, node, instance):
         image_root = var['image_root']
@@ -392,7 +394,8 @@ class PXE(base.NodeDriver):
 
     def _put_tftp_images(self, context, instance, image_meta, tftp_root):
         def _cache_image(image_id, target):
-            LOG.debug("fetching id=%s target=%s", image_id, target)
+            LOG.debug(_("fetching id=%(image_id)s target=%(target)s"),
+                      locals())
             bm_utils.cache_image(context=context,
                                  image_id=image_id,
                                  target=target,
@@ -460,7 +463,8 @@ class PXE(base.NodeDriver):
 
         tftp_paths = self._put_tftp_images(context, instance, image_meta,
                                            tftp_root)
-        LOG.debug("tftp_paths=%s", tftp_paths)
+        LOG.debug(_("tftp_paths for instance %(uuid)s: %(tftp_paths)s"),
+                  {'uuid': instance['uuid'], 'tftp_paths': tftp_paths})
 
         pxe_config_dir = os.path.join(tftp_root, 'pxelinux.cfg')
         pxe_config_path = os.path.join(pxe_config_dir,
