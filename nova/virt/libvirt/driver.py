@@ -146,7 +146,8 @@ libvirt_opts = [
                   'local=nova.virt.libvirt.volume.LibvirtVolumeDriver',
                   'fake=nova.virt.libvirt.volume.LibvirtFakeVolumeDriver',
                   'rbd=nova.virt.libvirt.volume.LibvirtNetVolumeDriver',
-                  'sheepdog=nova.virt.libvirt.volume.LibvirtNetVolumeDriver'
+                  'sheepdog=nova.virt.libvirt.volume.LibvirtNetVolumeDriver',
+                  'nfs=nova.virt.libvirt.volume_nfs.NfsVolumeDriver'
                   ],
                 help='Libvirt handlers for remote volumes.'),
     cfg.StrOpt('libvirt_disk_prefix',
@@ -1448,7 +1449,13 @@ class LibvirtDriver(driver.ComputeDriver):
                 configdrive_path = basepath(fname='disk.config')
                 LOG.info(_('Creating config drive at %(path)s'),
                          {'path': configdrive_path}, instance=instance)
+
                 cdb.make_drive(configdrive_path)
+            except exception.ProcessExecutionError, e:
+                LOG.error(_('Creating config drive failed with error: %s'),
+                          e, instance=instance)
+                raise
+
             finally:
                 cdb.cleanup()
 
@@ -1795,6 +1802,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
         if CONF.libvirt_type != "lxc" and CONF.libvirt_type != "uml":
             guest.acpi = True
+            guest.apic = True
 
         clk = vconfig.LibvirtConfigGuestClock()
         clk.offset = "utc"
@@ -2818,19 +2826,6 @@ class LibvirtDriver(driver.ComputeDriver):
 
         If 'refresh' is True, run update the stats first."""
         return self.host_state.get_host_stats(refresh=refresh)
-
-    def host_power_action(self, host, action):
-        """Reboots, shuts down or powers up the host."""
-        raise NotImplementedError()
-
-    def host_maintenance_mode(self, host, mode):
-        """Start/Stop host maintenance window. On start, it triggers
-        guest VMs evacuation."""
-        raise NotImplementedError()
-
-    def set_host_enabled(self, host, enabled):
-        """Sets the specified host's ability to accept new instances."""
-        pass
 
     def get_host_uptime(self, host):
         """Returns the result of calling "uptime"."""

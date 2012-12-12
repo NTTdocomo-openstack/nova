@@ -82,7 +82,8 @@ _fake_stub_out_get_nw_info = fake_network.stub_out_nw_api_get_instance_nw_info
 _ipv4_like = fake_network.ipv4_like
 
 
-def _concurrency(wait, done, target):
+def _concurrency(signal, wait, done, target):
+    signal.send()
     wait.wait()
     done.send()
 
@@ -491,12 +492,21 @@ class CacheConcurrencyTestCase(test.TestCase):
         backend = imagebackend.Backend(False)
         wait1 = eventlet.event.Event()
         done1 = eventlet.event.Event()
+        sig1 = eventlet.event.Event()
         thr1 = eventlet.spawn(backend.image('instance', 'name').cache,
-                _concurrency, 'fname', None, wait=wait1, done=done1)
+                _concurrency, 'fname', None,
+                signal=sig1, wait=wait1, done=done1)
+        eventlet.sleep(0)
+        # Thread 1 should run before thread 2.
+        sig1.wait()
+
         wait2 = eventlet.event.Event()
         done2 = eventlet.event.Event()
+        sig2 = eventlet.event.Event()
         thr2 = eventlet.spawn(backend.image('instance', 'name').cache,
-                _concurrency, 'fname', None, wait=wait2, done=done2)
+                _concurrency, 'fname', None,
+                signal=sig2, wait=wait2, done=done2)
+
         wait2.send()
         eventlet.sleep(0)
         try:
@@ -516,12 +526,24 @@ class CacheConcurrencyTestCase(test.TestCase):
         backend = imagebackend.Backend(False)
         wait1 = eventlet.event.Event()
         done1 = eventlet.event.Event()
+        sig1 = eventlet.event.Event()
         thr1 = eventlet.spawn(backend.image('instance', 'name').cache,
-                _concurrency, 'fname2', None, wait=wait1, done=done1)
+                _concurrency, 'fname2', None,
+                signal=sig1, wait=wait1, done=done1)
+        eventlet.sleep(0)
+        # Thread 1 should run before thread 2.
+        sig1.wait()
+
         wait2 = eventlet.event.Event()
         done2 = eventlet.event.Event()
+        sig2 = eventlet.event.Event()
         thr2 = eventlet.spawn(backend.image('instance', 'name').cache,
-                _concurrency, 'fname1', None, wait=wait2, done=done2)
+                _concurrency, 'fname1', None,
+                signal=sig2, wait=wait2, done=done2)
+        eventlet.sleep(0)
+        # Wait for thread 2 to start.
+        sig2.wait()
+
         wait2.send()
         eventlet.sleep(0)
         try:
@@ -652,6 +674,7 @@ class LibvirtConnTestCase(test.TestCase):
                                     _fake_network_info(self.stubs, 1),
                                     None, None)
         self.assertEquals(cfg.acpi, True)
+        self.assertEquals(cfg.apic, True)
         self.assertEquals(cfg.memory, 1024 * 1024 * 2)
         self.assertEquals(cfg.vcpus, 1)
         self.assertEquals(cfg.os_type, vm_mode.HVM)
@@ -2094,7 +2117,7 @@ class LibvirtConnTestCase(test.TestCase):
                             _bandwidth).AndRaise(libvirt.libvirtError('ERR'))
 
         def fake_lookup(instance_name):
-            if instance_name == instance_ref.name:
+            if instance_name == instance_ref['name']:
                 return vdmock
 
         self.create_fake_libvirt_mock(lookupByName=fake_lookup)
@@ -2180,7 +2203,7 @@ class LibvirtConnTestCase(test.TestCase):
                                      dummyjson)
 
             self.assertTrue(os.path.exists('%s/%s/' %
-                                           (tmpdir, instance_ref.name)))
+                                           (tmpdir, instance_ref['name'])))
 
         db.instance_destroy(self.context, instance_ref['uuid'])
 
@@ -2203,7 +2226,7 @@ class LibvirtConnTestCase(test.TestCase):
         vdmock.XMLDesc(0).AndReturn(dummyxml)
 
         def fake_lookup(instance_name):
-            if instance_name == instance_ref.name:
+            if instance_name == instance_ref['name']:
                 return vdmock
         self.create_fake_libvirt_mock(lookupByName=fake_lookup)
 
@@ -2229,7 +2252,7 @@ class LibvirtConnTestCase(test.TestCase):
 
         self.mox.ReplayAll()
         conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
-        info = conn.get_instance_disk_info(instance_ref.name)
+        info = conn.get_instance_disk_info(instance_ref['name'])
         info = jsonutils.loads(info)
         self.assertEquals(info[0]['type'], 'raw')
         self.assertEquals(info[0]['path'], '/test/disk')
@@ -2299,7 +2322,7 @@ class LibvirtConnTestCase(test.TestCase):
         conn.spawn(self.context, instance, None, [], 'herp',
                        network_info=network_info)
 
-        path = os.path.join(CONF.instances_path, instance.name)
+        path = os.path.join(CONF.instances_path, instance['name'])
         if os.path.isdir(path):
             shutil.rmtree(path)
 
@@ -3635,7 +3658,7 @@ class NWFilterTestCase(test.TestCase):
         self.security_group = self.setup_and_return_security_group()
 
         db.instance_add_security_group(self.context, inst_uuid,
-                                       self.security_group.id)
+                                       self.security_group['id'])
         instance = db.instance_get(self.context, inst_id)
 
         network_info = _fake_network_info(self.stubs, 1)
@@ -3652,7 +3675,7 @@ class NWFilterTestCase(test.TestCase):
                 break
         _ensure_all_called(mac, allow_dhcp)
         db.instance_remove_security_group(self.context, inst_uuid,
-                                          self.security_group.id)
+                                          self.security_group['id'])
         self.teardown_security_group()
         db.instance_destroy(context.get_admin_context(), instance_ref['uuid'])
 
@@ -3670,7 +3693,7 @@ class NWFilterTestCase(test.TestCase):
         self.security_group = self.setup_and_return_security_group()
 
         db.instance_add_security_group(self.context, inst_uuid,
-                                       self.security_group.id)
+                                       self.security_group['id'])
 
         instance = db.instance_get(self.context, inst_id)
 
@@ -3721,7 +3744,7 @@ class LibvirtUtilsTestCase(test.TestCase):
     def test_pick_disk_driver_name(self):
         type_map = {'kvm': ([True, 'qemu'], [False, 'qemu'], [None, 'qemu']),
                     'qemu': ([True, 'qemu'], [False, 'qemu'], [None, 'qemu']),
-                    'xen': ([True, 'phy'], [False, 'tap'], [None, 'tap']),
+                    'xen': ([True, 'phy'], [False, 'file'], [None, 'file']),
                     'uml': ([True, None], [False, None], [None, None]),
                     'lxc': ([True, None], [False, None], [None, None])}
 

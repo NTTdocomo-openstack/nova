@@ -17,14 +17,16 @@ import shutil
 import tempfile
 
 from nova import exception
+from nova.network import dns_driver
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
+
 
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
 
 
-class MiniDNS(object):
+class MiniDNS(dns_driver.DNSDriver):
     """ Trivial DNS driver. This will read/write to a local, flat file
         and have no effect on your actual DNS system. This class is
         strictly for testing purposes, and should keep you out of dependency
@@ -53,7 +55,7 @@ class MiniDNS(object):
         infile = open(self.filename, 'r')
         for line in infile:
             entry = self.parse_line(line)
-            if entry and entry['address'].lower() == 'domain'.lower():
+            if entry and entry['address'] == 'domain':
                 entries.append(entry['name'])
         infile.close()
         return entries
@@ -64,7 +66,7 @@ class MiniDNS(object):
         else:
             qualified = name
 
-        return qualified
+        return qualified.lower()
 
     def create_entry(self, name, address, type, domain):
         if name is None:
@@ -88,9 +90,9 @@ class MiniDNS(object):
             return None
         else:
             entry = {}
-            entry['address'] = vals[0]
-            entry['name'] = vals[1]
-            entry['type'] = vals[2]
+            entry['address'] = vals[0].lower()
+            entry['name'] = vals[1].lower()
+            entry['type'] = vals[2].lower()
             if entry['address'] == 'domain':
                 entry['domain'] = entry['name']
             else:
@@ -107,7 +109,7 @@ class MiniDNS(object):
         for line in infile:
             entry = self.parse_line(line)
             if ((not entry) or
-                entry['name'] != self.qualify(name, domain).lower()):
+                entry['name'] != self.qualify(name, domain)):
                 outfile.write(line)
             else:
                 deleted = True
@@ -116,7 +118,7 @@ class MiniDNS(object):
         shutil.move(outfile.name, self.filename)
         if not deleted:
             LOG.warn(_('Cannot delete entry |%s|'),
-                self.qualify(name, domain).lower())
+                self.qualify(name, domain))
             raise exception.NotFound
 
     def modify_address(self, name, address, domain):
@@ -129,7 +131,7 @@ class MiniDNS(object):
         for line in infile:
             entry = self.parse_line(line)
             if (entry and
-                entry['name'].lower() == self.qualify(name, domain).lower()):
+                entry['name'] == self.qualify(name, domain)):
                 outfile.write("%s   %s   %s\n" %
                     (address, self.qualify(name, domain), entry['type']))
             else:
@@ -143,8 +145,8 @@ class MiniDNS(object):
         infile = open(self.filename, 'r')
         for line in infile:
             entry = self.parse_line(line)
-            if entry and entry['address'].lower() == address.lower():
-                if entry['name'].lower().endswith(domain.lower()):
+            if entry and entry['address'] == address.lower():
+                if entry['name'].endswith(domain.lower()):
                     name = entry['name'].split(".")[0]
                     if name not in entries:
                         entries.append(name)
@@ -158,7 +160,7 @@ class MiniDNS(object):
         for line in infile:
             entry = self.parse_line(line)
             if (entry and
-                entry['name'].lower() == self.qualify(name, domain).lower()):
+                entry['name'] == self.qualify(name, domain)):
                 entries.append(entry['address'])
         infile.close()
         return entries
@@ -192,7 +194,7 @@ class MiniDNS(object):
         for line in infile:
             entry = self.parse_line(line)
             if ((not entry) or
-                entry['domain'] != fqdomain):
+                entry['domain'] != fqdomain.lower()):
                 outfile.write(line)
             else:
                 print "deleted %s" % entry

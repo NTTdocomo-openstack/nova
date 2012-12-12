@@ -41,7 +41,7 @@ datetime_fields = ['launched_at', 'terminated_at']
 class ConductorManager(manager.SchedulerDependentManager):
     """Mission: TBD"""
 
-    RPC_API_VERSION = '1.3'
+    RPC_API_VERSION = '1.6'
 
     def __init__(self, *args, **kwargs):
         super(ConductorManager, self).__init__(service_name='conductor',
@@ -69,6 +69,11 @@ class ConductorManager(manager.SchedulerDependentManager):
         return jsonutils.to_primitive(
             self.db.instance_get_all_by_host(context.elevated(), host))
 
+    def migration_get(self, context, migration_id):
+        migration_ref = self.db.migration_get(context.elevated(),
+                                              migration_id)
+        return jsonutils.to_primitive(migration_ref)
+
     def migration_update(self, context, migration, status):
         migration_ref = self.db.migration_update(context.elevated(),
                                                  migration['id'],
@@ -84,3 +89,17 @@ class ConductorManager(manager.SchedulerDependentManager):
     def aggregate_host_delete(self, context, aggregate, host):
         self.db.aggregate_host_delete(context.elevated(),
                 aggregate['id'], host)
+
+    def bw_usage_update(self, context, uuid, mac, start_period,
+                        bw_in=None, bw_out=None,
+                        last_ctr_in=None, last_ctr_out=None,
+                        last_refreshed=None):
+        if [bw_in, bw_out, last_ctr_in, last_ctr_out].count(None) != 4:
+            self.db.bw_usage_update(context, uuid, mac, start_period,
+                                    bw_in, bw_out, last_ctr_in, last_ctr_out,
+                                    last_refreshed)
+        usage = self.db.bw_usage_get(context, uuid, start_period, mac)
+        return jsonutils.to_primitive(usage)
+
+    def get_backdoor_port(self, context):
+        return self.backdoor_port

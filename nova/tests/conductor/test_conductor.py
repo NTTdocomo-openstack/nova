@@ -23,6 +23,7 @@ from nova.conductor import rpcapi as conductor_rpcapi
 from nova import context
 from nova import db
 from nova.db.sqlalchemy import models
+from nova import exception as exc
 from nova import notifications
 from nova.openstack.common import jsonutils
 from nova.openstack.common import timeutils
@@ -90,6 +91,14 @@ class ConductorTestCase(BaseTestCase):
             self.assertRaises(KeyError,
                               self._do_update, 'any-uuid', foobar=1)
 
+    def test_migration_get(self):
+        migration = db.migration_create(self.context.elevated(),
+                {'instance_uuid': 'fake-uuid',
+                 'status': 'migrating'})
+        self.assertEqual(jsonutils.to_primitive(migration),
+                         self.conductor.migration_get(self.context,
+                                                      migration['id']))
+
     def test_migration_update(self):
         migration = db.migration_create(self.context.elevated(),
                 {'instance_uuid': 'fake-uuid',
@@ -146,6 +155,44 @@ class ConductorTestCase(BaseTestCase):
 
         db.aggregate_delete(self.context.elevated(), aggregate_ref['id'])
 
+    def test_bw_usage_update(self):
+        self.mox.StubOutWithMock(db, 'bw_usage_update')
+        self.mox.StubOutWithMock(db, 'bw_usage_get')
+
+        update_args = (self.context, 'uuid', 'mac', 0, 10, 20, 5, 10, 20)
+        get_args = (self.context, 'uuid', 0, 'mac')
+
+        db.bw_usage_update(*update_args)
+        db.bw_usage_get(*get_args).AndReturn('foo')
+
+        self.mox.ReplayAll()
+        result = self.conductor.bw_usage_update(*update_args)
+        self.assertEqual(result, 'foo')
+
+    def test_get_backdoor_port(self):
+        backdoor_port = 59697
+
+        def fake_get_backdoor_port(self, context):
+            return backdoor_port
+
+        if isinstance(self.conductor, conductor_api.API):
+            self.stubs.Set(conductor_manager.ConductorManager,
+                          'get_backdoor_port', fake_get_backdoor_port)
+            port = self.conductor.get_backdoor_port(self.context, 'fake_host')
+        elif isinstance(self.conductor, conductor_api.LocalAPI):
+            try:
+                self.conductor.get_backdoor_port(self.context, 'fake_host')
+            except exc.InvalidRequest:
+                port = backdoor_port
+        else:
+            if isinstance(self.conductor, conductor_rpcapi.ConductorAPI):
+                self.stubs.Set(conductor_manager.ConductorManager,
+                              'get_backdoor_port', fake_get_backdoor_port)
+            self.conductor.backdoor_port = backdoor_port
+            port = self.conductor.get_backdoor_port(self.context)
+
+        self.assertEqual(port, backdoor_port)
+
 
 class ConductorRPCAPITestCase(ConductorTestCase):
     """Conductor RPC API Tests"""
@@ -168,6 +215,18 @@ class ConductorLocalAPITestCase(ConductorTestCase):
         # so override the base class here to make the call correctly
         return self.conductor.instance_update(self.context, instance_uuid,
                                               **updates)
+
+    def test_bw_usage_get(self):
+        self.mox.StubOutWithMock(db, 'bw_usage_update')
+        self.mox.StubOutWithMock(db, 'bw_usage_get')
+
+        get_args = (self.context, 'uuid', 0, 'mac')
+
+        db.bw_usage_get(*get_args).AndReturn('foo')
+
+        self.mox.ReplayAll()
+        result = self.conductor.bw_usage_get(*get_args)
+        self.assertEqual(result, 'foo')
 
 
 class ConductorAPITestCase(ConductorLocalAPITestCase):

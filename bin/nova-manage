@@ -79,6 +79,7 @@ from nova import db
 from nova.db import migration
 from nova import exception
 from nova.openstack.common import cfg
+from nova.openstack.common import cliutils
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import rpc
@@ -220,6 +221,10 @@ def _db_error(caught_exception):
 class ProjectCommands(object):
     """Class for managing projects."""
 
+    @args('--project', dest="project_id", metavar='<Project name>',
+            help='Project name')
+    @args('--key', dest="key", metavar='<key>', help='Key')
+    @args('--value', dest="value", metavar='<value>', help='Value')
     def quota(self, project_id, key=None, value=None):
         """Set or display quotas for project"""
         ctxt = context.get_admin_context()
@@ -518,15 +523,16 @@ class NetworkCommands(object):
         """Deletes a network"""
 
         if fixed_range is None and uuid is None:
-            raise Exception("Please specify either fixed_range or uuid")
+            raise Exception(_("Please specify either fixed_range or uuid"))
 
         net_manager = importutils.import_object(CONF.network_manager)
         if "QuantumManager" in CONF.network_manager:
             if uuid is None:
-                raise Exception("UUID is required to delete Quantum Networks")
+                raise Exception(_("UUID is required to delete "
+                                  "Quantum Networks"))
             if fixed_range:
-                raise Exception("Deleting by fixed_range is not supported "
-                                "with the QuantumManager")
+                raise Exception(_("Deleting by fixed_range is not supported "
+                                "with the QuantumManager"))
         # delete the network
         net_manager.delete_network(context.get_admin_context(),
             fixed_range, uuid)
@@ -1160,15 +1166,18 @@ def main():
     fn_args = [arg.decode('utf-8') for arg in fn_args]
 
     # call the action with the remaining arguments
+    # check arguments
+    try:
+        cliutils.validate_args(fn, *fn_args, **fn_kwargs)
+    except cliutils.MissingArgs as e:
+        print fn.__doc__
+        parser.print_help()
+        print e
+        sys.exit(1)
     try:
         fn(*fn_args, **fn_kwargs)
         rpc.cleanup()
         sys.exit(0)
-    except TypeError:
-        print _("Possible wrong number of arguments supplied")
-        print fn.__doc__
-        parser.print_help()
-        raise
     except Exception:
         print _("Command failed, please check log for more info")
         raise

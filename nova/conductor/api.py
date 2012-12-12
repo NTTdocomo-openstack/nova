@@ -16,6 +16,7 @@
 
 from nova.conductor import manager
 from nova.conductor import rpcapi
+from nova import exception as exc
 from nova.openstack.common import cfg
 
 conductor_opts = [
@@ -53,6 +54,9 @@ class LocalAPI(object):
     def instance_get_all_by_host(self, context, host):
         return self._manager.instance_get_all_by_host(context, host)
 
+    def migration_get(self, context, migration_id):
+        return self._manager.migration_get(context, migration_id)
+
     def migration_update(self, context, migration, status):
         return self._manager.migration_update(context, migration, status)
 
@@ -61,6 +65,20 @@ class LocalAPI(object):
 
     def aggregate_host_delete(self, context, aggregate, host):
         return self._manager.aggregate_host_delete(context, aggregate, host)
+
+    def bw_usage_get(self, context, uuid, start_period, mac):
+        return self._manager.bw_usage_update(context, uuid, mac, start_period)
+
+    def bw_usage_update(self, context, uuid, mac, start_period,
+                        bw_in, bw_out, last_ctr_in, last_ctr_out,
+                        last_refreshed=None):
+        return self._manager.bw_usage_update(context, uuid, mac, start_period,
+                                             bw_in, bw_out,
+                                             last_ctr_in, last_ctr_out,
+                                             last_refreshed)
+
+    def get_backdoor_port(self, context, host):
+        raise exc.InvalidRequest
 
 
 class API(object):
@@ -81,6 +99,9 @@ class API(object):
     def instance_get_all_by_host(self, context, host):
         return self.conductor_rpcapi.instance_get_all_by_host(context, host)
 
+    def migration_get(self, context, migration_id):
+        return self.conductor_rpcapi.migration_get(context, migration_id)
+
     def migration_update(self, context, migration, status):
         return self.conductor_rpcapi.migration_update(context, migration,
                                                       status)
@@ -92,3 +113,21 @@ class API(object):
     def aggregate_host_delete(self, context, aggregate, host):
         return self.conductor_rpcapi.aggregate_host_delete(context, aggregate,
                                                            host)
+
+    def bw_usage_get(self, context, uuid, start_period, mac):
+        return self.conductor_rpcapi.bw_usage_update(context, uuid, mac,
+                                                     start_period)
+
+    def bw_usage_update(self, context, uuid, mac, start_period,
+                        bw_in, bw_out, last_ctr_in, last_ctr_out,
+                        last_refreshed=None):
+        return self.conductor_rpcapi.bw_usage_update(
+            context, uuid, mac, start_period,
+            bw_in, bw_out, last_ctr_in, last_ctr_out,
+            last_refreshed)
+
+    #NOTE(mtreinish): This doesn't work on multiple conductors without any
+    # topic calculation in conductor_rpcapi. So the host param isn't used
+    # currently.
+    def get_backdoor_port(self, context, host):
+        return self.conductor_rpcapi.get_backdoor_port(context)

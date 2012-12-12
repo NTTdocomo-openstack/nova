@@ -15,14 +15,16 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations
 # under the License.
-import mox
 import shutil
 import tempfile
+
+import mox
 
 from nova import context
 from nova import db
 from nova.db.sqlalchemy import models
 from nova import exception
+from nova import ipv6
 from nova.network import linux_net
 from nova.network import manager as network_manager
 from nova.openstack.common import importutils
@@ -375,6 +377,17 @@ class FlatNetworkTestCase(test.TestCase):
                 "10.10.10.10",
                 "invalidtype",
                 zone1)
+
+    def test_mini_dns_driver_with_mixed_case(self):
+        zone1 = "example.org"
+        driver = self.network.instance_dns_manager
+        driver.create_entry("HostTen", "10.0.0.10", "A", zone1)
+        addresses = driver.get_entries_by_address("10.0.0.10", zone1)
+        self.assertEqual(len(addresses), 1)
+        for n in addresses:
+            driver.delete_entry(n, zone1)
+        addresses = driver.get_entries_by_address("10.0.0.10", zone1)
+        self.assertEqual(len(addresses), 0)
 
     def test_instance_dns(self):
         fixedip = '192.168.0.101'
@@ -1107,6 +1120,8 @@ class CommonNetworkTestCase(test.TestCase):
     def setUp(self):
         super(CommonNetworkTestCase, self).setUp()
         self.context = context.RequestContext('fake', 'fake')
+        self.flags(ipv6_backend='rfc2462')
+        ipv6.reset_backend()
 
     def fake_create_fixed_ips(self, context, network_id, fixed_cidr=None):
         return None
@@ -1987,7 +2002,7 @@ class LdapDNSTestCase(test.TestCase):
     def setUp(self):
         super(LdapDNSTestCase, self).setUp()
 
-        self.stub_module('ldap', fake_ldap)
+        self.useFixture(test.ReplaceModule('ldap', fake_ldap))
         dns_class = 'nova.network.ldapdns.LdapDNS'
         self.driver = importutils.import_object(dns_class)
 

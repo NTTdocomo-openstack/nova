@@ -53,6 +53,7 @@ from nova.compute import vm_states
 from nova import conductor
 import nova.context
 from nova import exception
+from nova import hooks
 from nova.image import glance
 from nova import manager
 from nova import network
@@ -268,9 +269,6 @@ class ComputeVirtAPI(virtapi.VirtAPI):
     def aggregate_get_by_host(self, context, host, key=None):
         return self._compute.db.aggregate_get_by_host(context, host, key=key)
 
-    def aggregate_metadata_get(self, context, aggregate_id):
-        return self._compute.db.aggregate_metadata_get(context, aggregate_id)
-
     def aggregate_metadata_add(self, context, aggregate_id, metadata,
                                set_delete=False):
         return self._compute.db.aggregate_metadata_add(context, aggregate_id,
@@ -330,6 +328,11 @@ class ComputeManager(manager.SchedulerDependentManager):
     def _get_resource_tracker(self, nodename):
         rt = self._resource_tracker_dict.get(nodename)
         if not rt:
+            if nodename not in self.driver.get_available_nodes():
+                msg = _("%(nodename)s is not a valid node managed by this "
+                        "compute host.") % locals()
+                raise exception.NovaException(msg)
+
             rt = resource_tracker.ResourceTracker(self.host,
                                                   self.driver,
                                                   nodename)
@@ -342,8 +345,11 @@ class ComputeManager(manager.SchedulerDependentManager):
         instance_ref = self.conductor_api.instance_update(context,
                                                           instance_uuid,
                                                           **kwargs)
-        rt = self._get_resource_tracker(instance_ref.get('node'))
-        rt.update_usage(context, instance_ref)
+        if (instance_ref['host'] == self.host and
+            instance_ref['node'] in self.driver.get_available_nodes()):
+
+            rt = self._get_resource_tracker(instance_ref.get('node'))
+            rt.update_usage(context, instance_ref)
 
         return instance_ref
 
@@ -1018,6 +1024,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                 self.volume_api.delete(context, volume)
             # NOTE(vish): bdms will be deleted on instance destroy
 
+    @hooks.add_hook("delete_instance")
     def _delete_instance(self, context, instance, bdms):
         """Delete an instance on this host."""
         instance_uuid = instance['uuid']
@@ -1625,8 +1632,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                        migration=None, migration_id=None):
         """Destroys the source instance."""
         if not migration:
-            migration = self.db.migration_get(context.elevated(),
-                    migration_id)
+            migration = self.conductor_api.migration_get(context, migration_id)
 
         self._notify_about_instance_usage(context, instance,
                                           "resize.confirm.start")
@@ -1662,8 +1668,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         """
         if not migration:
-            migration = self.db.migration_get(context.elevated(),
-                                                  migration_id)
+            migration = self.conductor_api.migration_get(context, migration_id)
 
         # NOTE(comstud): A revert_resize is essentially a resize back to
         # the old size, so we need to send a usage event here.
@@ -1706,10 +1711,8 @@ class ComputeManager(manager.SchedulerDependentManager):
         in the database.
 
         """
-        elevated = context.elevated()
-
         if not migration:
-            migration = self.db.migration_get(elevated, migration_id)
+            migration = self.conductor_api.migration_get(context, migration_id)
 
         with self._error_out_instance_on_exception(context, instance['uuid'],
                                                    reservations):
@@ -1720,7 +1723,8 @@ class ComputeManager(manager.SchedulerDependentManager):
 
             instance = self._instance_update(context,
                                         instance['uuid'],
-                                        host=migration['source_compute'])
+                                        host=migration['source_compute'],
+                                        node=migration['source_node'])
             self.network_api.setup_networks_on_host(context, instance,
                                             migration['source_compute'])
 
@@ -1889,7 +1893,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                         instance_type=None):
         """Starts the migration of a running instance to another host."""
         if not migration:
-            migration = self.db.migration_get(context.elevated(), migration_id)
+            migration = self.conductor_api.migration_get(context, migration_id)
         with self._error_out_instance_on_exception(context, instance['uuid'],
                                                    reservations):
             if not instance_type:
@@ -2026,8 +2030,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         """
         if not migration:
-            migration = self.db.migration_get(context.elevated(),
-                    migration_id)
+            migration = self.conductor_api.migration_get(context, migration_id)
         try:
             self._finish_resize(context, instance, migration,
                                 disk_info, image)
@@ -2946,20 +2949,19 @@ class ComputeManager(manager.SchedulerDependentManager):
                 bw_out = 0
                 last_ctr_in = None
                 last_ctr_out = None
-                usage = self.db.bw_usage_get(context,
-                                             bw_ctr['uuid'],
-                                             start_time,
-                                             bw_ctr['mac_address'])
+                usage = self.conductor_api.bw_usage_get(context,
+                                                        bw_ctr['uuid'],
+                                                        start_time,
+                                                        bw_ctr['mac_address'])
                 if usage:
                     bw_in = usage['bw_in']
                     bw_out = usage['bw_out']
                     last_ctr_in = usage['last_ctr_in']
                     last_ctr_out = usage['last_ctr_out']
                 else:
-                    usage = self.db.bw_usage_get(context,
-                                             bw_ctr['uuid'],
-                                             prev_time,
-                                             bw_ctr['mac_address'])
+                    usage = self.conductor_api.bw_usage_get(
+                        context, bw_ctr['uuid'], prev_time,
+                        bw_ctr['mac_address'])
                     if usage:
                         last_ctr_in = usage['last_ctr_in']
                         last_ctr_out = usage['last_ctr_out']
@@ -2978,15 +2980,15 @@ class ComputeManager(manager.SchedulerDependentManager):
                     else:
                         bw_out += (bw_ctr['bw_out'] - last_ctr_out)
 
-                self.db.bw_usage_update(context,
-                                        bw_ctr['uuid'],
-                                        bw_ctr['mac_address'],
-                                        start_time,
-                                        bw_in,
-                                        bw_out,
-                                        bw_ctr['bw_in'],
-                                        bw_ctr['bw_out'],
-                                        last_refreshed=refreshed)
+                self.conductor_api.bw_usage_update(context,
+                                                   bw_ctr['uuid'],
+                                                   bw_ctr['mac_address'],
+                                                   start_time,
+                                                   bw_in,
+                                                   bw_out,
+                                                   bw_ctr['bw_in'],
+                                                   bw_ctr['bw_out'],
+                                                   last_refreshed=refreshed)
 
     def _get_host_volume_bdms(self, context, host):
         """Return all block device mappings on a compute host"""
@@ -3101,7 +3103,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                 vm_instance = self.driver.get_info(db_instance)
                 vm_power_state = vm_instance['state']
             except exception.InstanceNotFound:
-                vm_power_state = power_state.NOSTATE
+                vm_power_state = power_state.SHUTDOWN
             # Note(maoy): the above get_info call might take a long time,
             # for example, because of a broken libvirt driver.
             # We re-query the DB to get the latest instance info to minimize
@@ -3152,9 +3154,8 @@ class ComputeManager(manager.SchedulerDependentManager):
                 pass
             elif vm_state == vm_states.ACTIVE:
                 # The only rational power state should be RUNNING
-                if vm_power_state in (power_state.NOSTATE,
-                                       power_state.SHUTDOWN,
-                                       power_state.CRASHED):
+                if vm_power_state in (power_state.SHUTDOWN,
+                                      power_state.CRASHED):
                     LOG.warn(_("Instance shutdown by itself. Calling "
                                "the stop API."), instance=db_instance)
                     try:

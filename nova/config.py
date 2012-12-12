@@ -43,9 +43,6 @@ def _get_my_ip():
 
 
 core_opts = [
-    cfg.StrOpt('api_paste_config',
-               default="api-paste.ini",
-               help='File name for the paste.deploy config for nova-api'),
     cfg.StrOpt('pybasedir',
                default=os.path.abspath(os.path.join(os.path.dirname(__file__),
                                                     '../')),
@@ -87,18 +84,6 @@ global_opts = [
                 default='http',
                 help='Default protocol to use when connecting to glance. '
                      'Set to https for SSL.'),
-    cfg.ListOpt('glance_api_servers',
-                default=['$glance_host:$glance_port'],
-                help='A list of the glance api servers available to nova. '
-                     'Prefix with https:// for ssl-based glance api servers. '
-                     '([hostname|ip]:port)'),
-    cfg.BoolOpt('glance_api_insecure',
-                default=False,
-                help='Allow to perform insecure SSL (https) requests to '
-                     'glance'),
-    cfg.IntOpt('glance_num_retries',
-               default=0,
-               help='Number retries when downloading an image from glance'),
     cfg.IntOpt('s3_port',
                default=3333,
                help='port used when accessing the s3 api'),
@@ -121,9 +106,6 @@ global_opts = [
     cfg.StrOpt('network_topic',
                default='network',
                help='the topic network nodes listen on'),
-    cfg.BoolOpt('api_rate_limit',
-                default=True,
-                help='whether to rate limit the api'),
     cfg.ListOpt('enabled_apis',
                 default=['ec2', 'osapi_compute', 'metadata'],
                 help='a list of APIs to enable by default'),
@@ -182,13 +164,13 @@ global_opts = [
                default='nova.cert.manager.CertManager',
                help='full class name for the Manager for cert'),
     cfg.StrOpt('instance_dns_manager',
-               default='nova.network.dns_driver.DNSDriver',
+               default='nova.network.noop_dns_driver.NoopDNSDriver',
                help='full class name for the DNS Manager for instance IPs'),
     cfg.StrOpt('instance_dns_domain',
                default='',
                help='full class name for the DNS Zone for instance IPs'),
     cfg.StrOpt('floating_ip_dns_manager',
-               default='nova.network.dns_driver.DNSDriver',
+               default='nova.network.noop_dns_driver.NoopDNSDriver',
                help='full class name for the DNS Manager for floating IPs'),
     cfg.StrOpt('network_manager',
                default='nova.network.manager.VlanManager',
@@ -243,9 +225,6 @@ global_opts = [
                   'nova.compute.api:nova.notifier.api.notify_decorator'
                   ],
                 help='List of modules/decorators to monkey patch'),
-    cfg.IntOpt('zombie_instance_updated_at_window',
-               default=172800,
-               help='Number of seconds zombie instances are cleaned up.'),
     cfg.IntOpt('service_down_time',
                default=60,
                help='maximum time since last check-in for up service'),
@@ -255,12 +234,6 @@ global_opts = [
     cfg.ListOpt('isolated_hosts',
                 default=[],
                 help='Host reserved for specific images'),
-    cfg.StrOpt('cache_images',
-                default='all',
-                help='Cache glance images locally. `all` will cache all'
-                     ' images, `some` will only cache images that have the'
-                     ' image_property `cache_in_nova=True`, and `none` turns'
-                     ' off caching entirely'),
     cfg.BoolOpt('use_cow_images',
                 default=True,
                 help='Whether to use cow images'),
@@ -273,9 +246,6 @@ global_opts = [
     cfg.StrOpt('volume_api_class',
                 default='nova.volume.cinder.API',
                 help='The full class name of the volume API class to use'),
-    cfg.StrOpt('auth_strategy',
-               default='noauth',
-               help='The strategy to use for auth: noauth or keystone.'),
     cfg.StrOpt('control_exchange',
                default='nova',
                help='AMQP exchange to connect to if using RabbitMQ or Qpid'),

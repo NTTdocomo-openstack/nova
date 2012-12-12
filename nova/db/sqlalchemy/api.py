@@ -584,8 +584,8 @@ def compute_node_statistics(context):
 
 
 @require_admin_context
-def certificate_get(context, certificate_id, session=None):
-    result = model_query(context, models.Certificate, session=session).\
+def certificate_get(context, certificate_id):
+    result = model_query(context, models.Certificate).\
                      filter_by(id=certificate_id).\
                      first()
 
@@ -4536,7 +4536,7 @@ def instance_fault_get_by_instance_uuids(context, instance_uuids):
     rows = model_query(context, models.InstanceFault, read_deleted='no').\
                        filter(models.InstanceFault.instance_uuid.in_(
                            instance_uuids)).\
-                       order_by(desc("created_at")).\
+                       order_by(desc("created_at"), desc("id")).\
                        all()
 
     output = {}
