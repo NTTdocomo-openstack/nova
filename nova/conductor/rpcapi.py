@@ -33,6 +33,12 @@ class ConductorAPI(nova.openstack.common.rpc.proxy.RpcProxy):
     1.4 - Added migration_get
     1.5 - Added bw_usage_update
     1.6 - Added get_backdoor_port()
+    1.7 - Added aggregate_get_by_host, aggregate_metadata_add,
+          and aggregate_metadata_delete
+    1.8 - Added security_group_get_by_instance and
+          security_group_rule_get_by_security_group
+    1.9 - Added provider_fw_rule_get_all
+    1.10 - Added agent_build_get_by_triple
     """
 
     BASE_RPC_API_VERSION = '1.0'
@@ -80,6 +86,24 @@ class ConductorAPI(nova.openstack.common.rpc.proxy.RpcProxy):
                             host=host)
         return self.call(context, msg, version='1.3')
 
+    def aggregate_get_by_host(self, context, host, key=None):
+        msg = self.make_msg('aggregate_get_by_host', host=host, key=key)
+        return self.call(context, msg, version='1.7')
+
+    def aggregate_metadata_add(self, context, aggregate, metadata,
+                               set_delete=False):
+        aggregate_p = jsonutils.to_primitive(aggregate)
+        msg = self.make_msg('aggregate_metadata_add', aggregate=aggregate_p,
+                            metadata=metadata,
+                            set_delete=set_delete)
+        return self.call(context, msg, version='1.7')
+
+    def aggregate_metadata_delete(self, context, aggregate, key):
+        aggregate_p = jsonutils.to_primitive(aggregate)
+        msg = self.make_msg('aggregate_metadata_delete', aggregate=aggregate_p,
+                            key=key)
+        return self.call(context, msg, version='1.7')
+
     def bw_usage_update(self, context, uuid, mac, start_period,
                         bw_in=None, bw_out=None,
                         last_ctr_in=None, last_ctr_out=None,
@@ -94,3 +118,25 @@ class ConductorAPI(nova.openstack.common.rpc.proxy.RpcProxy):
     def get_backdoor_port(self, context):
         msg = self.make_msg('get_backdoor_port')
         return self.call(context, msg, version='1.6')
+
+    def security_group_get_by_instance(self, context, instance):
+        instance_p = jsonutils.to_primitive(instance)
+        msg = self.make_msg('security_group_get_by_instance',
+                            instance=instance_p)
+        return self.call(context, msg, version='1.8')
+
+    def security_group_rule_get_by_security_group(self, context, secgroup):
+        secgroup_p = jsonutils.to_primitive(secgroup)
+        msg = self.make_msg('security_group_rule_get_by_security_group',
+                            secgroup=secgroup_p)
+        return self.call(context, msg, version='1.8')
+
+    def provider_fw_rule_get_all(self, context):
+        msg = self.make_msg('provider_fw_rule_get_all')
+        return self.call(context, msg, version='1.9')
+
+    def agent_build_get_by_triple(self, context, hypervisor, os, architecture):
+        msg = self.make_msg('agent_build_get_by_triple',
+                            hypervisor=hypervisor, os=os,
+                            architecture=architecture)
+        return self.call(context, msg, version='1.10')

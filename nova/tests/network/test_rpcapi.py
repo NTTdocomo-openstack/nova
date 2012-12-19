@@ -92,6 +92,13 @@ class NetworkRpcAPITestCase(test.TestCase):
         self._test_network_api('disassociate_network', rpc_method='call',
                 network_uuid='fake_uuid')
 
+    def test_associate_host_and_project(self):
+        self._test_network_api('associate', rpc_method='call',
+                network_uuid='fake_uuid',
+                associations={'host': "testHost",
+                              'project': 'testProject'},
+                version="1.5")
+
     def test_get_fixed_ip(self):
         self._test_network_api('get_fixed_ip', rpc_method='call', id='id')
 
@@ -264,14 +271,6 @@ class NetworkRpcAPITestCase(test.TestCase):
         self._test_network_api('_disassociate_floating_ip', rpc_method='call',
                 address='fake_addr', interface='fake_interface',
                 host='fake_host')
-
-    def test_lease_fixed_ip(self):
-        self._test_network_api('lease_fixed_ip', rpc_method='cast',
-                address='fake_addr', host='fake_host')
-
-    def test_release_fixed_ip(self):
-        self._test_network_api('release_fixed_ip', rpc_method='cast',
-                address='fake_addr', host='fake_host')
 
     def test_migrate_instance_start(self):
         self._test_network_api('migrate_instance_start', rpc_method='call',

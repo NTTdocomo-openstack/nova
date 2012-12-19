@@ -14,6 +14,8 @@
 
 """Tests for the conductor service"""
 
+import mox
+
 from nova.compute import instance_types
 from nova.compute import vm_states
 from nova import conductor
@@ -26,6 +28,7 @@ from nova.db.sqlalchemy import models
 from nova import exception as exc
 from nova import notifications
 from nova.openstack.common import jsonutils
+from nova.openstack.common.rpc import common as rpc_common
 from nova.openstack.common import timeutils
 from nova import test
 
@@ -33,13 +36,20 @@ from nova import test
 FAKE_IMAGE_REF = 'fake-image-ref'
 
 
-class BaseTestCase(test.TestCase):
+class _BaseTestCase(object):
     def setUp(self):
-        super(BaseTestCase, self).setUp()
+        super(_BaseTestCase, self).setUp()
+        self.db = None
         self.user_id = 'fake'
         self.project_id = 'fake'
         self.context = context.RequestContext(self.user_id,
                                               self.project_id)
+
+    def stub_out_client_exceptions(self):
+        def passthru(exceptions, func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        self.stubs.Set(rpc_common, 'catch_client_exception', passthru)
 
     def _create_fake_instance(self, params=None, type_name='m1.tiny'):
         if not params:
@@ -64,14 +74,6 @@ class BaseTestCase(test.TestCase):
         inst['os_type'] = 'Linux'
         inst.update(params)
         return db.instance_create(self.context, inst)
-
-
-class ConductorTestCase(BaseTestCase):
-    """Conductor Manager Tests"""
-    def setUp(self):
-        super(ConductorTestCase, self).setUp()
-        self.conductor = conductor_manager.ConductorManager()
-        self.db = None
 
     def _do_update(self, instance_uuid, **updates):
         return self.conductor.instance_update(self.context, instance_uuid,
@@ -155,6 +157,33 @@ class ConductorTestCase(BaseTestCase):
 
         db.aggregate_delete(self.context.elevated(), aggregate_ref['id'])
 
+    def test_aggregate_get_by_host(self):
+        self._setup_aggregate_with_host()
+        aggregates = self.conductor.aggregate_get_by_host(self.context, 'bar')
+        self.assertEqual(aggregates[0]['availability_zone'], 'foo')
+
+    def test_aggregate_metadata_add(self):
+        aggregate = {'name': 'fake aggregate', 'id': 'fake-id'}
+        metadata = {'foo': 'bar'}
+        self.mox.StubOutWithMock(db, 'aggregate_metadata_add')
+        db.aggregate_metadata_add(
+            mox.IgnoreArg(), aggregate['id'], metadata, False).AndReturn(
+                metadata)
+        self.mox.ReplayAll()
+        result = self.conductor.aggregate_metadata_add(self.context,
+                                                       aggregate,
+                                                       metadata)
+        self.assertEqual(result, metadata)
+
+    def test_aggregate_metadata_delete(self):
+        aggregate = {'name': 'fake aggregate', 'id': 'fake-id'}
+        self.mox.StubOutWithMock(db, 'aggregate_metadata_delete')
+        db.aggregate_metadata_delete(mox.IgnoreArg(), aggregate['id'], 'fake')
+        self.mox.ReplayAll()
+        result = self.conductor.aggregate_metadata_delete(self.context,
+                                                       aggregate,
+                                                       'fake')
+
     def test_bw_usage_update(self):
         self.mox.StubOutWithMock(db, 'bw_usage_update')
         self.mox.StubOutWithMock(db, 'bw_usage_get')
@@ -193,8 +222,56 @@ class ConductorTestCase(BaseTestCase):
 
         self.assertEqual(port, backdoor_port)
 
+    def test_security_group_get_by_instance(self):
+        fake_instance = {'id': 'fake-instance'}
+        self.mox.StubOutWithMock(db, 'security_group_get_by_instance')
+        db.security_group_get_by_instance(
+            self.context, fake_instance['id']).AndReturn('it worked')
+        self.mox.ReplayAll()
+        result = self.conductor.security_group_get_by_instance(self.context,
+                                                               fake_instance)
+        self.assertEqual(result, 'it worked')
 
-class ConductorRPCAPITestCase(ConductorTestCase):
+    def test_security_group_rule_get_by_security_group(self):
+        fake_secgroup = {'id': 'fake-secgroup'}
+        self.mox.StubOutWithMock(db,
+                                 'security_group_rule_get_by_security_group')
+        db.security_group_rule_get_by_security_group(
+            self.context, fake_secgroup['id']).AndReturn('it worked')
+        self.mox.ReplayAll()
+        result = self.conductor.security_group_rule_get_by_security_group(
+            self.context, fake_secgroup)
+        self.assertEqual(result, 'it worked')
+
+    def test_provider_fw_rule_get_all(self):
+        fake_rules = ['a', 'b', 'c']
+        self.mox.StubOutWithMock(db, 'provider_fw_rule_get_all')
+        db.provider_fw_rule_get_all(self.context).AndReturn(fake_rules)
+        self.mox.ReplayAll()
+        result = self.conductor.provider_fw_rule_get_all(self.context)
+        self.assertEqual(result, fake_rules)
+
+    def test_agent_build_get_by_triple(self):
+        self.mox.StubOutWithMock(db, 'agent_build_get_by_triple')
+        db.agent_build_get_by_triple(self.context, 'fake-hv', 'fake-os',
+                                     'fake-arch').AndReturn('it worked')
+        self.mox.ReplayAll()
+        result = self.conductor.agent_build_get_by_triple(self.context,
+                                                          'fake-hv',
+                                                          'fake-os',
+                                                          'fake-arch')
+        self.assertEqual(result, 'it worked')
+
+
+class ConductorTestCase(_BaseTestCase, test.TestCase):
+    """Conductor Manager Tests"""
+    def setUp(self):
+        super(ConductorTestCase, self).setUp()
+        self.conductor = conductor_manager.ConductorManager()
+        self.stub_out_client_exceptions()
+
+
+class ConductorRPCAPITestCase(_BaseTestCase, test.TestCase):
     """Conductor RPC API Tests"""
     def setUp(self):
         super(ConductorRPCAPITestCase, self).setUp()
@@ -203,12 +280,14 @@ class ConductorRPCAPITestCase(ConductorTestCase):
         self.conductor = conductor_rpcapi.ConductorAPI()
 
 
-class ConductorLocalAPITestCase(ConductorTestCase):
-    """Conductor LocalAPI Tests"""
+class ConductorAPITestCase(_BaseTestCase, test.TestCase):
+    """Conductor API Tests"""
     def setUp(self):
-        super(ConductorLocalAPITestCase, self).setUp()
-        self.conductor = conductor_api.LocalAPI()
-        self.db = db
+        super(ConductorAPITestCase, self).setUp()
+        self.conductor_service = self.start_service(
+            'conductor', manager='nova.conductor.manager.ConductorManager')
+        self.conductor = conductor_api.API()
+        self.db = None
 
     def _do_update(self, instance_uuid, **updates):
         # NOTE(danms): the public API takes actual keyword arguments,
@@ -229,14 +308,21 @@ class ConductorLocalAPITestCase(ConductorTestCase):
         self.assertEqual(result, 'foo')
 
 
-class ConductorAPITestCase(ConductorLocalAPITestCase):
-    """Conductor API Tests"""
+class ConductorLocalAPITestCase(ConductorAPITestCase):
+    """Conductor LocalAPI Tests"""
     def setUp(self):
-        super(ConductorAPITestCase, self).setUp()
-        self.conductor_service = self.start_service(
-            'conductor', manager='nova.conductor.manager.ConductorManager')
-        self.conductor = conductor_api.API()
-        self.db = None
+        super(ConductorLocalAPITestCase, self).setUp()
+        self.conductor = conductor_api.LocalAPI()
+        self.db = db
+        self.stub_out_client_exceptions()
+
+    def test_client_exceptions(self):
+        instance = self._create_fake_instance()
+        # NOTE(danms): The LocalAPI should not raise exceptions wrapped
+        # in ClientException. KeyError should be raised if an invalid
+        # update key is passed, so use that to validate.
+        self.assertRaises(KeyError,
+                          self._do_update, instance['uuid'], foo='bar')
 
 
 class ConductorImportTest(test.TestCase):

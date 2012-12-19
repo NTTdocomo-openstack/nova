@@ -19,6 +19,7 @@
 import fixtures
 
 from nova import config
+from nova import ipv6
 from nova.openstack.common import cfg
 from nova.tests.utils import cleanup_dns_managers
 
@@ -28,6 +29,8 @@ CONF.import_opt('scheduler_driver', 'nova.scheduler.manager')
 CONF.import_opt('fake_network', 'nova.network.manager')
 CONF.import_opt('network_size', 'nova.network.manager')
 CONF.import_opt('num_networks', 'nova.network.manager')
+CONF.import_opt('floating_ip_dns_manager', 'nova.network.manager')
+CONF.import_opt('instance_dns_manager', 'nova.network.manager')
 CONF.import_opt('policy_file', 'nova.policy')
 CONF.import_opt('compute_driver', 'nova.virt.driver')
 CONF.import_opt('api_paste_config', 'nova.wsgi')
@@ -67,3 +70,4 @@ class ConfFixture(fixtures.Fixture):
         config.parse_args([], default_config_files=[])
         self.addCleanup(self.conf.reset)
         self.addCleanup(cleanup_dns_managers)
+        self.addCleanup(ipv6.api.reset_backend)

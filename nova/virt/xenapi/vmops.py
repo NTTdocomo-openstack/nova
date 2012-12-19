@@ -147,7 +147,6 @@ class VMOps(object):
         self.compute_api = compute.API()
         self._session = session
         self._virtapi = virtapi
-        self.poll_rescue_last_ran = None
         self.firewall_driver = firewall.load_driver(
             DEFAULT_FIREWALL_DRIVER,
             self._virtapi,
@@ -240,7 +239,7 @@ class VMOps(object):
                       image_meta, block_device_info=None):
         vdis = vm_utils.get_vdis_for_instance(context, self._session,
                                           instance, name_label,
-                                          image_meta['id'],
+                                          image_meta.get('id'),
                                           disk_image_type,
                                           block_device_info=block_device_info)
         # Just get the VDI ref once
@@ -1217,45 +1216,6 @@ class VMOps(object):
             LOG.info(_("Automatically hard rebooting"), instance=instance)
             self.compute_api.reboot(ctxt, instance, "HARD")
 
-    def poll_rescued_instances(self, timeout):
-        """Look for expirable rescued instances.
-
-            - forcibly exit rescue mode for any instances that have been
-              in rescue mode for >= the provided timeout
-
-        """
-        last_ran = self.poll_rescue_last_ran
-        if not last_ran:
-            # We need a base time to start tracking.
-            self.poll_rescue_last_ran = timeutils.utcnow()
-            return
-
-        if not timeutils.is_older_than(last_ran, timeout):
-            # Do not run. Let's bail.
-            return
-
-        # Update the time tracker and proceed.
-        self.poll_rescue_last_ran = timeutils.utcnow()
-
-        rescue_vms = []
-        for instance in self.list_instances():
-            if instance.endswith("-rescue"):
-                rescue_vms.append(dict(name=instance,
-                                       vm_ref=vm_utils.lookup(self._session,
-                                                              instance)))
-
-        for vm in rescue_vms:
-            rescue_vm_ref = vm["vm_ref"]
-
-            original_name = vm["name"].split("-rescue", 1)[0]
-            original_vm_ref = vm_utils.lookup(self._session, original_name)
-
-            self._destroy_rescue_instance(rescue_vm_ref, original_vm_ref)
-
-            self._release_bootlock(original_vm_ref)
-            self._session.call_xenapi("VM.start", original_vm_ref, False,
-                                      False)
-
     def get_info(self, instance, vm_ref=None):
         """Return data about VM instance."""
         vm_ref = vm_ref or self._get_vm_opaque_ref(instance)
@@ -1679,3 +1639,24 @@ class VMOps(object):
             with excutils.save_and_reraise_exception():
                 recover_method(context, instance, destination_hostname,
                                block_migration)
+
+    def get_per_instance_usage(self):
+        """Get usage info about each active instance."""
+        usage = {}
+
+        def _is_active(vm_rec):
+            power_state = vm_rec['power_state'].lower()
+            return power_state in ['running', 'paused']
+
+        def _get_uuid(vm_rec):
+            other_config = vm_rec['other_config']
+            return other_config.get('nova_uuid', None)
+
+        for vm_ref, vm_rec in vm_utils.list_vms(self._session):
+            uuid = _get_uuid(vm_rec)
+
+            if _is_active(vm_rec) and uuid is not None:
+                memory_mb = int(vm_rec['memory_static_max']) / 1024 / 1024
+                usage[uuid] = {'memory_mb': memory_mb, 'uuid': uuid}
+
+        return usage

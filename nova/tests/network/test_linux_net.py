@@ -21,16 +21,14 @@ import mox
 
 from nova import context
 from nova import db
+from nova.network import driver
 from nova.network import linux_net
-from nova.openstack.common import cfg
 from nova.openstack.common import fileutils
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 from nova import test
 from nova import utils
 
-CONF = cfg.CONF
-CONF.import_opt('network_driver', 'nova.config')
 LOG = logging.getLogger(__name__)
 
 HOST = "testhost"
@@ -214,8 +212,7 @@ class LinuxNetworkTestCase(test.TestCase):
 
     def setUp(self):
         super(LinuxNetworkTestCase, self).setUp()
-        network_driver = CONF.network_driver
-        self.driver = importutils.import_module(network_driver)
+        self.driver = driver.load_network_driver()
         self.driver.db = db
         self.context = context.RequestContext('testuser', 'testproject',
                                               is_admin=True)
@@ -493,6 +490,33 @@ class LinuxNetworkTestCase(test.TestCase):
         ]
         for inp in expected_inputs:
             self.assertTrue(inp in inputs[0])
+
+        executes = []
+        inputs = []
+
+        @classmethod
+        def fake_remove(_self, bridge, gateway):
+            return
+
+        self.stubs.Set(linux_net.LinuxBridgeInterfaceDriver,
+                       'remove_bridge', fake_remove)
+
+        driver.unplug(network)
+        expected = [
+            ('ebtables', '-D', 'INPUT', '-p', 'ARP', '-i', iface,
+             '--arp-ip-dst', dhcp, '-j', 'DROP'),
+            ('ebtables', '-D', 'OUTPUT', '-p', 'ARP', '-o', iface,
+             '--arp-ip-src', dhcp, '-j', 'DROP'),
+            ('iptables-save', '-c', '-t', 'filter'),
+            ('iptables-restore', '-c'),
+            ('iptables-save', '-c', '-t', 'nat'),
+            ('iptables-restore', '-c'),
+            ('ip6tables-save', '-c', '-t', 'filter'),
+            ('ip6tables-restore', '-c'),
+        ]
+        self.assertEqual(executes, expected)
+        for inp in expected_inputs:
+            self.assertFalse(inp in inputs[0])
 
     def _test_initialize_gateway(self, existing, expected, routes=''):
         self.flags(fake_network=False)

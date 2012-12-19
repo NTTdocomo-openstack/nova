@@ -290,10 +290,6 @@ class XenAPIDriver(driver.ComputeDriver):
         """Poll for rebooting instances"""
         self._vmops.poll_rebooting_instances(timeout, instances)
 
-    def poll_rescued_instances(self, timeout):
-        """Poll for rescued instances"""
-        self._vmops.poll_rescued_instances(timeout)
-
     def reset_network(self, instance):
         """reset networking for specified instance"""
         self._vmops.reset_network(instance)
@@ -610,6 +606,14 @@ class XenAPIDriver(driver.ComputeDriver):
                                   block_device_info=None):
         """resume guest state when a host is booted"""
         self._vmops.power_on(instance)
+
+    def get_per_instance_usage(self):
+        """Get information about instance resource usage.
+
+        :returns: dict of  nova uuid => dict of usage
+        info
+        """
+        return self._vmops.get_per_instance_usage()
 
 
 class XenAPISession(object):

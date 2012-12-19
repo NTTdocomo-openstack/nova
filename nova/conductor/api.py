@@ -14,10 +14,13 @@
 
 """Handles all requests to the conductor service"""
 
+import functools
+
 from nova.conductor import manager
 from nova.conductor import rpcapi
 from nova import exception as exc
 from nova.openstack.common import cfg
+from nova.openstack.common.rpc import common as rpc_common
 
 conductor_opts = [
     cfg.BoolOpt('use_local',
@@ -37,12 +40,33 @@ CONF.register_group(conductor_group)
 CONF.register_opts(conductor_opts, conductor_group)
 
 
+class ExceptionHelper(object):
+    """Class to wrap another and translate the ClientExceptions raised by its
+    function calls to the actual ones"""
+
+    def __init__(self, target):
+        self._target = target
+
+    def __getattr__(self, name):
+        func = getattr(self._target, name)
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except rpc_common.ClientException, e:
+                raise e._exc_info
+        return wrapper
+
+
 class LocalAPI(object):
     """A local version of the conductor API that does database updates
     locally instead of via RPC"""
 
     def __init__(self):
-        self._manager = manager.ConductorManager()
+        # TODO(danms): This needs to be something more generic for
+        # other/future users of this sort of functionality.
+        self._manager = ExceptionHelper(manager.ConductorManager())
 
     def instance_update(self, context, instance_uuid, **updates):
         """Perform an instance update in the database"""
@@ -66,6 +90,20 @@ class LocalAPI(object):
     def aggregate_host_delete(self, context, aggregate, host):
         return self._manager.aggregate_host_delete(context, aggregate, host)
 
+    def aggregate_get_by_host(self, context, host, key=None):
+        return self._manager.aggregate_get_by_host(context, host, key)
+
+    def aggregate_metadata_add(self, context, aggregate, metadata,
+                               set_delete=False):
+        return self._manager.aggregate_metadata_add(context, aggregate,
+                                                    metadata,
+                                                    set_delete)
+
+    def aggregate_metadata_delete(self, context, aggregate, key):
+        return self._manager.aggregate_metadata_delete(context,
+                                                       aggregate,
+                                                       key)
+
     def bw_usage_get(self, context, uuid, start_period, mac):
         return self._manager.bw_usage_update(context, uuid, mac, start_period)
 
@@ -79,6 +117,20 @@ class LocalAPI(object):
 
     def get_backdoor_port(self, context, host):
         raise exc.InvalidRequest
+
+    def security_group_get_by_instance(self, context, instance):
+        return self._manager.security_group_get_by_instance(context, instance)
+
+    def security_group_rule_get_by_security_group(self, context, secgroup):
+        return self._manager.security_group_rule_get_by_security_group(
+            context, secgroup)
+
+    def provider_fw_rule_get_all(self, context):
+        return self._manager.provider_fw_rule_get_all(context)
+
+    def agent_build_get_by_triple(self, context, hypervisor, os, architecture):
+        return self._manager.agent_build_get_by_triple(context, hypervisor,
+                                                       os, architecture)
 
 
 class API(object):
@@ -114,6 +166,20 @@ class API(object):
         return self.conductor_rpcapi.aggregate_host_delete(context, aggregate,
                                                            host)
 
+    def aggregate_get_by_host(self, context, host, key=None):
+        return self.conductor_rpcapi.aggregate_get_by_host(context, host, key)
+
+    def aggregate_metadata_add(self, context, aggregate, metadata,
+                               set_delete=False):
+        return self.conductor_rpcapi.aggregate_metadata_add(context, aggregate,
+                                                            metadata,
+                                                            set_delete)
+
+    def aggregate_metadata_delete(self, context, aggregate, key):
+        return self.conductor_rpcapi.aggregate_metadata_delete(context,
+                                                               aggregate,
+                                                               key)
+
     def bw_usage_get(self, context, uuid, start_period, mac):
         return self.conductor_rpcapi.bw_usage_update(context, uuid, mac,
                                                      start_period)
@@ -131,3 +197,20 @@ class API(object):
     # currently.
     def get_backdoor_port(self, context, host):
         return self.conductor_rpcapi.get_backdoor_port(context)
+
+    def security_group_get_by_instance(self, context, instance):
+        return self.conductor_rpcapi.security_group_get_by_instance(context,
+                                                                    instance)
+
+    def security_group_rule_get_by_security_group(self, context, secgroup):
+        return self.conductor_rpcapi.security_group_rule_get_by_security_group(
+            context, secgroup)
+
+    def provider_fw_rule_get_all(self, context):
+        return self.conductor_rpcapi.provider_fw_rule_get_all(context)
+
+    def agent_build_get_by_triple(self, context, hypervisor, os, architecture):
+        return self.conductor_rpcapi.agent_build_get_by_triple(context,
+                                                               hypervisor,
+                                                               os,
+                                                               architecture)

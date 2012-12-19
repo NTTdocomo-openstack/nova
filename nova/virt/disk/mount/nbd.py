@@ -16,6 +16,8 @@
 """Support for mounting images with qemu-nbd"""
 
 import os
+import random
+import re
 import time
 
 from nova.openstack.common import cfg
@@ -29,103 +31,106 @@ nbd_opts = [
     cfg.IntOpt('timeout_nbd',
                default=10,
                help='time to wait for a NBD device coming up'),
-    cfg.IntOpt('max_nbd_devices',
-               default=16,
-               help='maximum number of possible nbd devices'),
     ]
 
 CONF = cfg.CONF
 CONF.register_opts(nbd_opts)
+
+NBD_DEVICE_RE = re.compile('nbd[0-9]+')
+MAX_NBD_WAIT = 30
 
 
 class NbdMount(api.Mount):
     """qemu-nbd support disk images."""
     mode = 'nbd'
 
-    # NOTE(padraig): There are three issues with this nbd device handling
-    #  1. max_nbd_devices should be inferred (#861504)
-    #  2. We assume nothing else on the system uses nbd devices
-    #  3. Multiple workers on a system can race against each other
-    # A patch has been proposed in Nov 2011, to add add a -f option to
-    # qemu-nbd, akin to losetup -f. One could test for this by running qemu-nbd
-    # with just the -f option, where it will fail if not supported, or if there
-    # are no free devices. Note that patch currently hardcodes 16 devices.
-    # We might be able to alleviate problem 2. by scanning /proc/partitions
-    # like the aformentioned patch does.
+    def _detect_nbd_devices(self):
+        """Detect nbd device files."""
+        return filter(NBD_DEVICE_RE.match, os.listdir('/sys/block/'))
 
-    _DEVICES_INITIALIZED = False
-    _DEVICES = None
-
-    def __init__(self, image, mount_dir, partition=None, device=None):
-        super(NbdMount, self).__init__(image, mount_dir, partition=partition,
-                                       device=device)
-
-        # NOTE(mikal): this must be done here, because we need configuration
-        # to have been parsed before we initialize. Note the scoping to ensure
-        # we're updating the class scoped variables.
-        if not self._DEVICES_INITIALIZED:
-            NbdMount._DEVICES = ['/dev/nbd%s' % i for
-                                 i in range(CONF.max_nbd_devices)]
-            NbdMount._DEVICES_INITIALIZED = True
+    def _find_unused(self, devices):
+        for device in devices:
+            if not os.path.exists(os.path.join('/sys/block/', device, 'pid')):
+                return device
+        LOG.warn(_('No free nbd devices'))
+        return None
 
     def _allocate_nbd(self):
-        if not os.path.exists("/sys/block/nbd0"):
+        if not os.path.exists('/sys/block/nbd0'):
+            LOG.error(_('ndb module not loaded'))
             self.error = _('nbd unavailable: module not loaded')
             return None
 
-        while True:
-            if not self._DEVICES:
-                # really want to log this info, not raise
-                self.error = _('No free nbd devices')
-                return None
+        devices = self._detect_nbd_devices()
+        random.shuffle(devices)
+        device = self._find_unused(devices)
+        if not device:
+            # really want to log this info, not raise
+            self.error = _('No free nbd devices')
+            return None
+        return os.path.join('/dev', device)
 
-            device = self._DEVICES.pop()
-            if not os.path.exists("/sys/block/%s/pid" %
-                                  os.path.basename(device)):
-                break
-        return device
+    def _read_pid_file(self, pidfile):
+        # This is for unit test convenience
+        with open(pidfile) as f:
+            pid = int(f.readline())
+        return pid
 
-    def _free_nbd(self, device):
-        # The device could already be present if unget_dev
-        # is called right after a nova restart
-        # (when destroying an LXC container for example).
-        if not device in self._DEVICES:
-            self._DEVICES.append(device)
-
-    def get_dev(self):
+    def _inner_get_dev(self):
         device = self._allocate_nbd()
         if not device:
             return False
 
-        LOG.debug(_("Get nbd device %(dev)s for %(imgfile)s") %
+        # NOTE(mikal): qemu-nbd will return an error if the device file is
+        # already in use.
+        LOG.debug(_('Get nbd device %(dev)s for %(imgfile)s'),
                   {'dev': device, 'imgfile': self.image})
         _out, err = utils.trycmd('qemu-nbd', '-c', device, self.image,
                                  run_as_root=True)
         if err:
             self.error = _('qemu-nbd error: %s') % err
-            self._free_nbd(device)
             return False
 
         # NOTE(vish): this forks into another process, so give it a chance
-        #             to set up before continuing
+        # to set up before continuing
+        pidfile = "/sys/block/%s/pid" % os.path.basename(device)
         for _i in range(CONF.timeout_nbd):
-            if os.path.exists("/sys/block/%s/pid" % os.path.basename(device)):
+            if os.path.exists(pidfile):
                 self.device = device
                 break
             time.sleep(1)
         else:
+            _out, err = utils.trycmd('qemu-nbd', '-d', device,
+                                     run_as_root=True)
+            if err:
+                LOG.warn(_('Detaching from erroneous nbd device returned '
+                           'error: %s'), err)
             self.error = _('nbd device %s did not show up') % device
-            self._free_nbd(device)
             return False
 
+        self.error = ''
         self.linked = True
+        return True
+
+    def get_dev(self):
+        """Retry requests for NBD devices."""
+        start_time = time.time()
+        device = self._inner_get_dev()
+        while not device:
+            LOG.info(_('nbd device allocation failed. Will retry in 2 '
+                       'seconds.'))
+            time.sleep(2)
+            if time.time() - start_time > MAX_NBD_WAIT:
+                LOG.warn(_('nbd device allocation failed after repeated '
+                           'retries.'))
+                return False
+            device = self._inner_get_dev()
         return True
 
     def unget_dev(self):
         if not self.linked:
             return
-        LOG.debug(_("Release nbd device %s"), self.device)
+        LOG.debug(_('Release nbd device %s'), self.device)
         utils.execute('qemu-nbd', '-d', self.device, run_as_root=True)
-        self._free_nbd(self.device)
         self.linked = False
         self.device = None

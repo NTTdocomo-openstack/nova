@@ -175,7 +175,6 @@ CONF.import_opt('console_topic', 'nova.config')
 CONF.import_opt('host', 'nova.config')
 CONF.import_opt('my_ip', 'nova.config')
 CONF.import_opt('network_manager', 'nova.config')
-CONF.import_opt('password_length', 'nova.config')
 CONF.import_opt('reclaim_instance_interval', 'nova.config')
 CONF.import_opt('vpn_image_id', 'nova.config')
 CONF.import_opt('my_ip', 'nova.config')
@@ -267,35 +266,34 @@ class ComputeVirtAPI(virtapi.VirtAPI):
             context, host)
 
     def aggregate_get_by_host(self, context, host, key=None):
-        return self._compute.db.aggregate_get_by_host(context, host, key=key)
+        return self._compute.conductor_api.aggregate_get_by_host(context,
+                                                                 host, key=key)
 
-    def aggregate_metadata_add(self, context, aggregate_id, metadata,
+    def aggregate_metadata_add(self, context, aggregate, metadata,
                                set_delete=False):
-        return self._compute.db.aggregate_metadata_add(context, aggregate_id,
-                                                       metadata,
-                                                       set_delete=set_delete)
+        return self._compute.conductor_api.aggregate_metadata_add(
+            context, aggregate, metadata, set_delete=set_delete)
 
-    def aggregate_metadata_delete(self, context, aggregate_id, key):
-        return self._compute.db.aggregate_metadata_delete(context,
-                                                          aggregate_id, key)
+    def aggregate_metadata_delete(self, context, aggregate, key):
+        return self._compute.conductor_api.aggregate_metadata_delete(
+            context, aggregate, key)
 
-    def security_group_get_by_instance(self, context, instance_uuid):
-        return self._compute.db.security_group_get_by_instance(context,
-                                                               instance_uuid)
+    def security_group_get_by_instance(self, context, instance):
+        return self._compute.conductor_api.security_group_get_by_instance(
+            context, instance)
 
     def security_group_rule_get_by_security_group(self, context,
-                                                  security_group_id):
-        return self._compute.db.security_group_rule_get_by_security_group(
-            context, security_group_id)
+                                                  security_group):
+        return (self._compute.conductor_api.
+                security_group_rule_get_by_security_group(context,
+                                                          security_group))
 
     def provider_fw_rule_get_all(self, context):
-        return self._compute.db.provider_fw_rule_get_all(context)
+        return self._compute.conductor_api.provider_fw_rule_get_all(context)
 
     def agent_build_get_by_triple(self, context, hypervisor, os, architecture):
-        return self._compute.db.agent_build_get_by_triple(context,
-                                                          hypervisor,
-                                                          os,
-                                                          architecture)
+        return self._compute.conductor_api.agent_build_get_by_triple(
+            context, hypervisor, os, architecture)
 
 
 class ComputeManager(manager.SchedulerDependentManager):
@@ -1461,7 +1459,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         if new_pass is None:
             # Generate a random password
-            new_pass = utils.generate_password(CONF.password_length)
+            new_pass = utils.generate_password()
 
         max_tries = 10
 
@@ -1571,7 +1569,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         LOG.audit(_('Rescuing'), context=context, instance=instance)
 
         admin_password = (rescue_password if rescue_password else
-                      utils.generate_password(CONF.password_length))
+                      utils.generate_password())
 
         network_info = self._get_instance_nw_info(context, instance)
 
@@ -1593,6 +1591,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                               vm_state=vm_states.RESCUED,
                               task_state=None,
                               power_state=current_power_state,
+                              launched_at=timeutils.utcnow(),
                               expected_task_state=task_states.RESCUING)
 
     @exception.wrap_exception(notifier=notifier, publisher_id=publisher_id())
@@ -2819,7 +2818,22 @@ class ComputeManager(manager.SchedulerDependentManager):
     @manager.periodic_task
     def _poll_rescued_instances(self, context):
         if CONF.rescue_timeout > 0:
-            self.driver.poll_rescued_instances(CONF.rescue_timeout)
+            instances = self.conductor_api.instance_get_all_by_host(context,
+                                                                    self.host)
+
+            rescued_instances = []
+            for instance in instances:
+                if instance['vm_state'] == vm_states.RESCUED:
+                    rescued_instances.append(instance)
+
+            to_unrescue = []
+            for instance in rescued_instances:
+                if timeutils.is_older_than(instance['launched_at'],
+                                           CONF.rescue_timeout):
+                    to_unrescue.append(instance)
+
+            for instance in to_unrescue:
+                self.compute_api.unrescue(context, instance)
 
     @manager.periodic_task
     def _poll_unconfirmed_resizes(self, context):

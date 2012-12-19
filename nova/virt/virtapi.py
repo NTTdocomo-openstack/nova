@@ -48,37 +48,37 @@ class VirtAPI(object):
         """
         raise NotImplementedError()
 
-    def aggregate_metadata_add(self, context, aggregate_id, metadata,
+    def aggregate_metadata_add(self, context, aggregate, metadata,
                                set_delete=False):
         """Add/update metadata for specified aggregate
         :param context: security context
-        :param aggregate_id: id of aggregate on which to update metadata
+        :param aggregate: aggregate on which to update metadata
         :param metadata: dict of metadata to add/update
         :param set_delete: if True, only add
         """
         raise NotImplementedError()
 
-    def aggregate_metadata_delete(self, context, aggregate_id, key):
+    def aggregate_metadata_delete(self, context, aggregate, key):
         """Delete the given metadata key from specified aggregate
         :param context: security context
-        :param aggregate_id: id of aggregate from which to delete metadata
+        :param aggregate: aggregate from which to delete metadata
         :param key: metadata key to delete
         """
         raise NotImplementedError()
 
-    def security_group_get_by_instance(self, context, instance_uuid):
+    def security_group_get_by_instance(self, context, instance):
         """Get the security group for a specified instance
         :param context: security context
-        :param instance_uuid: instance defining the security group we want
+        :param instance: instance defining the security group we want
         """
         raise NotImplementedError()
 
     def security_group_rule_get_by_security_group(self, context,
-                                                  security_group_id):
+                                                  security_group):
         """Get the rules associated with a specified security group
         :param context: security context
-        :param security_group_id: the security group for which the rules
-                                  should be returned
+        :param security_group: the security group for which the rules
+                               should be returned
         """
         raise NotImplementedError()
 

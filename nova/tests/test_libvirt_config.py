@@ -18,15 +18,13 @@ from lxml import etree
 from lxml import objectify
 
 from nova import test
-
+from nova.tests import matchers
 from nova.virt.libvirt import config
 
 
 class LibvirtConfigBaseTest(test.TestCase):
     def assertXmlEqual(self, expectedXmlstr, actualXmlstr):
-        expected = etree.tostring(objectify.fromstring(expectedXmlstr))
-        actual = etree.tostring(objectify.fromstring(actualXmlstr))
-        self.assertEqual(expected, actual)
+        self.assertThat(actualXmlstr, matchers.XMLMatches(expectedXmlstr))
 
 
 class LibvirtConfigTest(LibvirtConfigBaseTest):
@@ -65,6 +63,7 @@ class LibvirtConfigCapsTest(LibvirtConfigBaseTest):
         xmlin = """
         <capabilities>
           <host>
+            <uuid>c7a5fdbd-edaf-9455-926a-d65c16db1809</uuid>
             <cpu>
               <arch>x86_64</arch>
               <model>Opteron_G3</model>
@@ -88,6 +87,7 @@ class LibvirtConfigCapsTest(LibvirtConfigBaseTest):
         obj.parse_str(xmlin)
 
         self.assertEqual(type(obj.host), config.LibvirtConfigCapsHost)
+        self.assertEqual(obj.host.uuid, "c7a5fdbd-edaf-9455-926a-d65c16db1809")
 
         xmlout = obj.to_xml()
 
@@ -300,6 +300,85 @@ class LibvirtConfigGuestCPUTest(LibvirtConfigBaseTest):
         xml = obj.to_xml()
         self.assertXmlEqual(xml, """
             <cpu mode="host-model" match="exact"/>
+        """)
+
+
+class LibvirtConfigGuestSMBIOSTest(LibvirtConfigBaseTest):
+
+    def test_config_simple(self):
+        obj = config.LibvirtConfigGuestSMBIOS()
+
+        xml = obj.to_xml()
+        self.assertXmlEqual(xml, """
+            <smbios mode="sysinfo"/>
+        """)
+
+
+class LibvirtConfigGuestSysinfoTest(LibvirtConfigBaseTest):
+
+    def test_config_simple(self):
+        obj = config.LibvirtConfigGuestSysinfo()
+
+        xml = obj.to_xml()
+        self.assertXmlEqual(xml, """
+            <sysinfo type="smbios"/>
+        """)
+
+    def test_config_bios(self):
+        obj = config.LibvirtConfigGuestSysinfo()
+        obj.bios_vendor = "Acme"
+        obj.bios_version = "6.6.6"
+
+        xml = obj.to_xml()
+        self.assertXmlEqual(xml, """
+            <sysinfo type="smbios">
+              <bios>
+                <entry name="vendor">Acme</entry>
+                <entry name="version">6.6.6</entry>
+              </bios>
+            </sysinfo>
+        """)
+
+    def test_config_system(self):
+        obj = config.LibvirtConfigGuestSysinfo()
+        obj.system_manufacturer = "Acme"
+        obj.system_product = "Wile Coyote"
+        obj.system_version = "6.6.6"
+        obj.system_serial = "123456"
+        obj.system_uuid = "c7a5fdbd-edaf-9455-926a-d65c16db1809"
+
+        xml = obj.to_xml()
+        self.assertXmlEqual(xml, """
+            <sysinfo type="smbios">
+              <system>
+                <entry name="manufacturer">Acme</entry>
+                <entry name="product">Wile Coyote</entry>
+                <entry name="version">6.6.6</entry>
+                <entry name="serial">123456</entry>
+                <entry name="uuid">c7a5fdbd-edaf-9455-926a-d65c16db1809</entry>
+              </system>
+            </sysinfo>
+        """)
+
+    def test_config_mixed(self):
+        obj = config.LibvirtConfigGuestSysinfo()
+        obj.bios_vendor = "Acme"
+        obj.system_manufacturer = "Acme"
+        obj.system_product = "Wile Coyote"
+        obj.system_uuid = "c7a5fdbd-edaf-9455-926a-d65c16db1809"
+
+        xml = obj.to_xml()
+        self.assertXmlEqual(xml, """
+            <sysinfo type="smbios">
+              <bios>
+                <entry name="vendor">Acme</entry>
+              </bios>
+              <system>
+                <entry name="manufacturer">Acme</entry>
+                <entry name="product">Wile Coyote</entry>
+                <entry name="uuid">c7a5fdbd-edaf-9455-926a-d65c16db1809</entry>
+              </system>
+            </sysinfo>
         """)
 
 
@@ -677,8 +756,13 @@ class LibvirtConfigGuestTest(LibvirtConfigBaseTest):
         obj.uuid = "b38a3f43-4be2-4046-897f-b67c2f5e0147"
         obj.os_type = "linux"
         obj.os_boot_dev = "hd"
+        obj.os_smbios = config.LibvirtConfigGuestSMBIOS()
         obj.acpi = True
         obj.apic = True
+
+        obj.sysinfo = config.LibvirtConfigGuestSysinfo()
+        obj.sysinfo.bios_vendor = "Acme"
+        obj.sysinfo.system_version = "1.0.0"
 
         disk = config.LibvirtConfigGuestDisk()
         disk.source_type = "file"
@@ -695,9 +779,18 @@ class LibvirtConfigGuestTest(LibvirtConfigBaseTest):
               <name>demo</name>
               <memory>104857600</memory>
               <vcpu>2</vcpu>
+              <sysinfo type='smbios'>
+                 <bios>
+                   <entry name="vendor">Acme</entry>
+                 </bios>
+                 <system>
+                   <entry name="version">1.0.0</entry>
+                 </system>
+              </sysinfo>
               <os>
                 <type>linux</type>
                 <boot dev="hd"/>
+                <smbios mode="sysinfo"/>
               </os>
               <features>
                 <acpi/>

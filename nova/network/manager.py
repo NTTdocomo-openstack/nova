@@ -60,14 +60,17 @@ from nova import exception
 from nova import ipv6
 from nova import manager
 from nova.network import api as network_api
+from nova.network import driver
 from nova.network import model as network_model
 from nova.network import rpcapi as network_rpcapi
 from nova.openstack.common import cfg
 from nova.openstack.common import excutils
 from nova.openstack.common import importutils
+from nova.openstack.common import jsonutils
 from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
 from nova.openstack.common.notifier import api as notifier
+from nova.openstack.common.rpc import common as rpc_common
 from nova.openstack.common import timeutils
 from nova.openstack.common import uuidutils
 import nova.policy
@@ -150,6 +153,11 @@ network_opts = [
     cfg.BoolOpt('fake_call',
                 default=False,
                 help='If True, skip using the queue and make local calls'),
+    cfg.BoolOpt('teardown_unused_network_gateway',
+                default=False,
+                help='If True, unused gateway devices (VLAN and bridge) are '
+                     'deleted in VLAN network mode with multi hosted '
+                     'networks'),
     cfg.BoolOpt('force_dhcp_release',
                 default=False,
                 help='If True, send a dhcp release on instance termination'),
@@ -167,16 +175,21 @@ network_opts = [
                help='domain to use for building the hostnames'),
     cfg.StrOpt('l3_lib',
                default='nova.network.l3.LinuxNetL3',
-               help="Indicates underlying L3 management library")
+               help="Indicates underlying L3 management library"),
+    cfg.StrOpt('instance_dns_manager',
+               default='nova.network.noop_dns_driver.NoopDNSDriver',
+               help='full class name for the DNS Manager for instance IPs'),
+    cfg.StrOpt('instance_dns_domain',
+               default='',
+               help='full class name for the DNS Zone for instance IPs'),
+    cfg.StrOpt('floating_ip_dns_manager',
+               default='nova.network.noop_dns_driver.NoopDNSDriver',
+               help='full class name for the DNS Manager for floating IPs'),
     ]
 
 CONF = cfg.CONF
 CONF.register_opts(network_opts)
 CONF.import_opt('fake_network', 'nova.config')
-CONF.import_opt('floating_ip_dns_manager', 'nova.config')
-CONF.import_opt('instance_dns_domain', 'nova.config')
-CONF.import_opt('instance_dns_manager', 'nova.config')
-CONF.import_opt('network_driver', 'nova.config')
 CONF.import_opt('use_ipv6', 'nova.config')
 CONF.import_opt('my_ip', 'nova.config')
 
@@ -459,6 +472,7 @@ class FloatingIP(object):
 
         return floating_ip
 
+    @rpc_common.client_exceptions(exception.FloatingIpNotFoundForAddress)
     @wrap_check_policy
     def deallocate_floating_ip(self, context, address,
                                affect_auto_assigned=False):
@@ -505,6 +519,7 @@ class FloatingIP(object):
         if reservations:
             QUOTAS.commit(context, reservations)
 
+    @rpc_common.client_exceptions(exception.FloatingIpNotFoundForAddress)
     @wrap_check_policy
     def associate_floating_ip(self, context, floating_address, fixed_address,
                               affect_auto_assigned=False):
@@ -584,6 +599,7 @@ class FloatingIP(object):
                         'network.floating_ip.associate',
                         notifier.INFO, payload=payload)
 
+    @rpc_common.client_exceptions(exception.FloatingIpNotFoundForAddress)
     @wrap_check_policy
     def disassociate_floating_ip(self, context, address,
                                  affect_auto_assigned=False):
@@ -654,6 +670,7 @@ class FloatingIP(object):
                         'network.floating_ip.disassociate',
                         notifier.INFO, payload=payload)
 
+    @rpc_common.client_exceptions(exception.FloatingIpNotFound)
     @wrap_check_policy
     def get_floating_ip(self, context, id):
         """Returns a floating IP as a dict"""
@@ -876,7 +893,7 @@ class NetworkManager(manager.SchedulerDependentManager):
         The one at a time part is to flatten the layout to help scale
     """
 
-    RPC_API_VERSION = '1.4'
+    RPC_API_VERSION = '1.5'
 
     # If True, this manager requires VIF to create a bridge.
     SHOULD_CREATE_BRIDGE = False
@@ -892,9 +909,7 @@ class NetworkManager(manager.SchedulerDependentManager):
     required_create_args = []
 
     def __init__(self, network_driver=None, *args, **kwargs):
-        if not network_driver:
-            network_driver = CONF.network_driver
-        self.driver = importutils.import_module(network_driver)
+        self.driver = driver.load_network_driver(network_driver)
         self.instance_dns_manager = importutils.import_object(
                 CONF.instance_dns_manager)
         self.instance_dns_domain = CONF.instance_dns_domain
@@ -1451,7 +1466,6 @@ class NetworkManager(manager.SchedulerDependentManager):
         if teardown:
             network = self._get_network_by_id(context,
                                               fixed_ip_ref['network_id'])
-            self._teardown_network_on_host(context, network)
 
             if CONF.force_dhcp_release:
                 dev = self.driver.get_dev(network)
@@ -1473,6 +1487,8 @@ class NetworkManager(manager.SchedulerDependentManager):
                 # NOTE(vish): This forces a packet so that the release_fixed_ip
                 #             callback will get called by nova-dhcpbridge.
                 self.driver.release_dhcp(dev, address, vif['address'])
+
+            self._teardown_network_on_host(context, network)
 
     def lease_fixed_ip(self, context, address):
         """Called by dhcp-bridge when ip is leased."""
@@ -1904,7 +1920,7 @@ class NetworkManager(manager.SchedulerDependentManager):
             networks = self.db.network_get_all(context)
         except exception.NoNetworksFound:
             return []
-        return [dict(network.iteritems()) for network in networks]
+        return [jsonutils.to_primitive(network) for network in networks]
 
     @wrap_check_policy
     def disassociate_network(self, context, network_uuid):
@@ -1915,12 +1931,12 @@ class NetworkManager(manager.SchedulerDependentManager):
     def get_fixed_ip(self, context, id):
         """Return a fixed ip"""
         fixed = self.db.fixed_ip_get(context, id)
-        return dict(fixed.iteritems())
+        return jsonutils.to_primitive(fixed)
 
     @wrap_check_policy
     def get_fixed_ip_by_address(self, context, address):
         fixed = self.db.fixed_ip_get_by_address(context, address)
-        return dict(fixed.iteritems())
+        return jsonutils.to_primitive(fixed)
 
     def get_vif_by_mac_address(self, context, mac_address):
         """Returns the vifs record for the mac_address"""
@@ -2198,6 +2214,27 @@ class VlanManager(RPCAllocateFixedIP, FloatingIP, NetworkManager):
             network_id = None
         self.db.network_associate(context, project_id, network_id, force=True)
 
+    @wrap_check_policy
+    def associate(self, context, network_uuid, associations):
+        """Associate or disassociate host or project to network."""
+        network_id = self.get_network(context, network_uuid)['id']
+        if 'host' in associations:
+            host = associations['host']
+            if host is None:
+                self.db.network_disassociate(context, network_id,
+                                             disassociate_host=True,
+                                             disassociate_project=False)
+            else:
+                self.db.network_set_host(context, network_id, host)
+        if 'project' in associations:
+            project = associations['project']
+            if project is None:
+                self.db.network_disassociate(context, network_id,
+                                             disassociate_host=False,
+                                             disassociate_project=True)
+            else:
+                self.db.network_associate(context, project, network_id, True)
+
     def _get_network_by_id(self, context, network_id):
         # NOTE(vish): Don't allow access to networks with project_id=None as
         #             these are networksa that haven't been allocated to a
@@ -2244,6 +2281,7 @@ class VlanManager(RPCAllocateFixedIP, FloatingIP, NetworkManager):
         return NetworkManager.create_networks(
             self, context, vpn=True, **kwargs)
 
+    @lockutils.synchronized('setup_network', 'nova-', external=True)
     def _setup_network_on_host(self, context, network):
         """Sets up network on this host."""
         if not network['vpn_public_address']:
@@ -2275,6 +2313,7 @@ class VlanManager(RPCAllocateFixedIP, FloatingIP, NetworkManager):
                 self.db.network_update(context, network['id'],
                                        {'gateway_v6': gateway})
 
+    @lockutils.synchronized('setup_network', 'nova-', external=True)
     def _teardown_network_on_host(self, context, network):
         if not CONF.fake_network:
             network['dhcp_server'] = self._get_dhcp_ip(context, network)
@@ -2282,6 +2321,25 @@ class VlanManager(RPCAllocateFixedIP, FloatingIP, NetworkManager):
             # NOTE(dprince): dhcp DB queries require elevated context
             elevated = context.elevated()
             self.driver.update_dhcp(elevated, dev, network)
+
+            # NOTE(ethuleau): For multi hosted networks, if the network is no
+            # more used on this host and if VPN forwarding rule aren't handed
+            # by the host, we delete the network gateway.
+            vpn_address = network['vpn_public_address']
+            if (CONF.teardown_unused_network_gateway and
+                network['multi_host'] and vpn_address != CONF.vpn_ip and
+                not self.db.network_in_use_on_host(context, network['id'],
+                                                   self.host)):
+                LOG.debug("Remove unused gateway %s", network['bridge'])
+                self.driver.kill_dhcp(dev)
+                self.l3driver.remove_gateway(network)
+                if not CONF.share_dhcp_address:
+                    values = {'allocated': False,
+                              'host': None}
+                    self.db.fixed_ip_update(context, network['dhcp_server'],
+                                            values)
+            else:
+                self.driver.update_dhcp(context, dev, network)
 
     def _get_network_dict(self, network):
         """Returns the dict representing necessary and meta network fields"""

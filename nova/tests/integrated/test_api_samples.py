@@ -15,6 +15,7 @@
 
 import base64
 import datetime
+import inspect
 import os
 import re
 import urllib
@@ -22,11 +23,14 @@ import uuid
 
 from lxml import etree
 
+# Import extensions to pull in osapi_compute_extension CONF option used below.
+from nova.api.openstack.compute import extensions
 from nova.cloudpipe.pipelib import CloudPipe
 from nova.compute import api
 from nova import context
 from nova import db
 from nova.db.sqlalchemy import models
+from nova.network import api
 from nova.network.manager import NetworkManager
 from nova.openstack.common import cfg
 from nova.openstack.common import importutils
@@ -41,8 +45,11 @@ from nova.tests.integrated import integrated_helpers
 
 CONF = cfg.CONF
 CONF.import_opt('allow_resize_to_same_host', 'nova.compute.api')
-CONF.import_opt('osapi_compute_extension', 'nova.config')
+CONF.import_opt('osapi_compute_extension',
+                'nova.api.openstack.compute.extensions')
 CONF.import_opt('vpn_image_id', 'nova.config')
+CONF.import_opt('osapi_compute_link_prefix', 'nova.api.openstack.common')
+CONF.import_opt('osapi_glance_link_prefix', 'nova.api.openstack.common')
 LOG = logging.getLogger(__name__)
 
 
@@ -307,6 +314,77 @@ class ApiSampleTestBase(integrated_helpers._IntegratedTestBase):
 
     def _do_delete(self, url):
         return self._get_response(url, 'DELETE')
+
+
+class ApiSamplesTrap(ApiSampleTestBase):
+    """Make sure extensions don't get added without tests"""
+
+    all_extensions = True
+
+    def _get_extensions_tested(self):
+        tests = []
+        for attr in globals().values():
+            if not inspect.isclass(attr):
+                continue  # Skip non-class objects
+            if not issubclass(attr, integrated_helpers._IntegratedTestBase):
+                continue  # Skip non-test classes
+            if attr.extension_name is None:
+                continue  # Skip base tests
+            cls = importutils.import_class(attr.extension_name)
+            tests.append(cls.alias)
+        return tests
+
+    def _get_extensions(self):
+        extensions = []
+        response = self._do_get('extensions')
+        for extension in jsonutils.loads(response.read())['extensions']:
+            extensions.append(str(extension['alias']))
+        return extensions
+
+    def test_all_extensions_have_samples(self):
+        # NOTE(danms): This is a list of extensions which are currently
+        # in the tree but that don't (yet) have tests. This list should
+        # NOT be allowed to grow, and should shrink to zero (and be
+        # removed) soon.
+        do_not_approve_additions = []
+        do_not_approve_additions.append('NMN')
+        do_not_approve_additions.append('OS-FLV-DISABLED')
+        do_not_approve_additions.append('os-config-drive')
+        do_not_approve_additions.append('os-coverage')
+        do_not_approve_additions.append('os-create-server-ext')
+        do_not_approve_additions.append('os-fixed-ips')
+        do_not_approve_additions.append('os-flavor-access')
+        do_not_approve_additions.append('os-flavor-extra-specs')
+        do_not_approve_additions.append('os-flavor-rxtx')
+        do_not_approve_additions.append('os-flavor-swap')
+        do_not_approve_additions.append('os-floating-ip-dns')
+        do_not_approve_additions.append('os-floating-ip-pools')
+        do_not_approve_additions.append('os-fping')
+        do_not_approve_additions.append('os-hypervisors')
+        do_not_approve_additions.append('os-instance_usage_audit_log')
+        do_not_approve_additions.append('os-networks')
+        do_not_approve_additions.append('os-quota-class-sets')
+        do_not_approve_additions.append('os-services')
+        do_not_approve_additions.append('os-volumes')
+
+        tests = self._get_extensions_tested()
+        extensions = self._get_extensions()
+        missing_tests = []
+        for extension in extensions:
+            # NOTE(danms): if you add tests, remove it from the
+            # exclusions list
+            self.assertFalse(extension in do_not_approve_additions and
+                             extension in tests)
+
+            # NOTE(danms): if you add an extension, it must come with
+            # api_samples tests!
+            if (extension not in tests and
+                extension not in do_not_approve_additions):
+                missing_tests.append(extension)
+
+        if missing_tests:
+            LOG.error("Extensions are missing tests: %s" % missing_tests)
+        self.assertEqual(missing_tests, [])
 
 
 class VersionsSampleJsonTest(ApiSampleTestBase):
@@ -1896,3 +1974,131 @@ class FlavorManageSampleJsonTests(ApiSampleTestBase):
 
 class FlavorManageSampleXmlTests(FlavorManageSampleJsonTests):
     ctype = "xml"
+
+
+class DiskConfigJsonTest(ServersSampleBase):
+    extension_name = ("nova.api.openstack.compute.contrib.disk_config."
+                      "Disk_config")
+
+    def test_list_servers_detail(self):
+        uuid = self._post_server()
+        response = self._do_get('servers/detail')
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        subs['hostid'] = '[a-f0-9]+'
+        subs['id'] = uuid
+        return self._verify_response('list-servers-detail-get',
+                                     subs, response)
+
+    def test_get_server(self):
+        uuid = self._post_server()
+        response = self._do_get('servers/%s' % uuid)
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        subs['hostid'] = '[a-f0-9]+'
+        return self._verify_response('server-get-resp', subs, response)
+
+    def test_update_server(self):
+        uuid = self._post_server()
+        response = self._do_put('servers/%s' % uuid,
+                                'server-update-put-req', {})
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        subs['hostid'] = '[a-f0-9]+'
+        return self._verify_response('server-update-put-resp',
+                                      subs, response)
+
+    def test_resize_server(self):
+        self.flags(allow_resize_to_same_host=True)
+        uuid = self._post_server()
+        response = self._do_post('servers/%s/action' % uuid,
+                                 'server-resize-post-req', {})
+        self.assertEqual(response.status, 202)
+        # NOTE(tmello): Resize does not return response body
+        # Bug #1085213.
+        self.assertEqual(response.read(), "")
+
+    def test_rebuild_server(self):
+        uuid = self._post_server()
+        subs = {
+            'image_id': fake.get_valid_image_id(),
+            'host': self._get_host(),
+        }
+        response = self._do_post('servers/%s/action' % uuid,
+                                 'server-action-rebuild-req', subs)
+        self.assertEqual(response.status, 202)
+        subs = self._get_regexes()
+        subs['hostid'] = '[a-f0-9]+'
+        return self._verify_response('server-action-rebuild-resp',
+                                      subs, response)
+
+    def test_get_image(self):
+        image_id = fake.get_valid_image_id()
+        response = self._do_get('images/%s' % image_id)
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        subs['image_id'] = image_id
+        return self._verify_response('image-get-resp', subs, response)
+
+    def test_list_images(self):
+        response = self._do_get('images/detail')
+        self.assertEqual(response.status, 200)
+        subs = self._get_regexes()
+        return self._verify_response('image-list-resp', subs, response)
+
+
+class DiskConfigXmlTest(DiskConfigJsonTest):
+        ctype = 'xml'
+
+
+class NetworksAssociateJsonTests(ApiSampleTestBase):
+    extension_name = ("nova.api.openstack.compute.contrib"
+                                     ".networks_associate.Networks_associate")
+
+    _sentinel = object()
+
+    def _get_flags(self):
+        f = super(NetworksAssociateJsonTests, self)._get_flags()
+        f['osapi_compute_extension'] = CONF.osapi_compute_extension[:]
+        # Networks_associate requires Networks to be update
+        f['osapi_compute_extension'].append(
+            'nova.api.openstack.compute.contrib.networks.Networks')
+        return f
+
+    def setUp(self):
+        super(NetworksAssociateJsonTests, self).setUp()
+
+        def fake_associate(self, context, network_id,
+                           host=NetworksAssociateJsonTests._sentinel,
+                           project=NetworksAssociateJsonTests._sentinel):
+            return True
+
+        self.stubs.Set(api.API, "associate", fake_associate)
+
+    def test_disassociate(self):
+        response = self._do_post('os-networks/1/action',
+                                 'network-disassociate-req',
+                                 {})
+        self.assertEqual(response.status, 202)
+
+    def test_disassociate_host(self):
+        response = self._do_post('os-networks/1/action',
+                                 'network-disassociate-host-req',
+                                 {})
+        self.assertEqual(response.status, 202)
+
+    def test_disassociate_project(self):
+        response = self._do_post('os-networks/1/action',
+                                 'network-disassociate-project-req',
+                                 {})
+        self.assertEqual(response.status, 202)
+
+    def test_associate_host(self):
+        response = self._do_post('os-networks/1/action',
+                                 'network-associate-host-req',
+                                 {"host": "testHost"})
+        self.assertEqual(response.status, 202)
+
+
+class NetworksAssociateXmlTests(NetworksAssociateJsonTests):
+    ctype = 'xml'

@@ -462,35 +462,29 @@ def create_vdi(session, sr_ref, instance, name_label, disk_type, virtual_size,
 
 def get_vdis_for_boot_from_vol(session, dev_params):
     vdis = {}
-    sr_uuid = dev_params['sr_uuid']
-    sr_ref = volume_utils.find_sr_by_uuid(session,
-                                          sr_uuid)
+    sr_uuid, label, sr_params = volume_utils.parse_sr_info(dev_params)
+    sr_ref = volume_utils.find_sr_by_uuid(session, sr_uuid)
     # Try introducing SR if it is not present
     if not sr_ref:
-        if 'name_label' not in dev_params:
-            label = 'tempSR-%s' % dev_params['volume_id']
-        else:
-            label = dev_params['name_label']
-
-        if 'name_description' not in dev_params:
-            desc = ''
-        else:
-            desc = dev_params.get('name_description')
-        sr_params = {}
-        for k in dev_params['introduce_sr_keys']:
-            sr_params[k] = dev_params[k]
-
-        sr_params['name_description'] = desc
-        sr_ref = volume_utils.introduce_sr(session, sr_uuid, label,
-                                           sr_params)
+        sr_ref = volume_utils.introduce_sr(session, sr_uuid, label, sr_params)
 
     if sr_ref is None:
         raise exception.NovaException(_('SR not present and could not be '
                                         'introduced'))
     else:
-        session.call_xenapi("SR.scan", sr_ref)
-        return {'root': dict(uuid=dev_params['vdi_uuid'],
-                file=None, osvol=True)}
+        if 'vdi_uuid' in dev_params:
+            session.call_xenapi("SR.scan", sr_ref)
+            vdis = {'root': dict(uuid=dev_params['vdi_uuid'],
+                    file=None, osvol=True)}
+        else:
+            try:
+                vdi_ref = volume_utils.introduce_vdi(session, sr_ref)
+                vdi_rec = session.call_xenapi("VDI.get_record", vdi_ref)
+                vdis = {'root': dict(uuid=vdi_rec['uuid'],
+                                     file=None, osvol=True)}
+            except volume_utils.StorageError, exc:
+                LOG.exception(exc)
+                volume_utils.forget_sr(session, sr_uuid)
     return vdis
 
 
@@ -523,8 +517,7 @@ def get_vdis_for_instance(context, session, instance, name_label, image,
             bdm_root_dev = block_device_info['block_device_mapping'][0]
             dev_params = bdm_root_dev['connection_info']['data']
             LOG.debug(dev_params)
-            return get_vdis_for_boot_from_vol(session,
-                                             dev_params)
+            return get_vdis_for_boot_from_vol(session, dev_params)
     return _create_image(context, session, instance, name_label, image,
                         image_type)
 
@@ -1255,6 +1248,9 @@ def determine_disk_image_type(image_meta):
     2. If we're not using Glance, then we need to deduce this based on
        whether a kernel_id is specified.
     """
+    if not image_meta:
+        return None
+
     disk_format = image_meta['disk_format']
 
     disk_format_map = {
@@ -1293,6 +1289,16 @@ def determine_is_pv(session, vdi_ref, disk_image_type, os_type):
         3. Glance (DISK): pv is assumed
 
         4. Glance (DISK_ISO): no pv is assumed
+
+        5. Boot From Volume - without image metadata (None): attempt to
+           use Pygrub to figure out if the volume stores a PV VM or a
+           HVM one. Log a warning, because there may be cases where the
+           volume is RAW (in which case using pygrub is fine) and cases
+           where the content of the volume is VHD, and pygrub might not
+           work as expected.
+           NOTE: if disk_image_type is not specified, instances launched
+           from remote volumes will have to include kernel and ramdisk
+           because external kernel and ramdisk will not be fetched.
     """
 
     LOG.debug(_("Looking up vdi %s for PV kernel"), vdi_ref)
@@ -1312,6 +1318,12 @@ def determine_is_pv(session, vdi_ref, disk_image_type, os_type):
     elif disk_image_type == ImageType.DISK_ISO:
         # 4. ISO
         is_pv = False
+    elif not disk_image_type:
+        LOG.warning(_("Image format is None: trying to determine PV status "
+                      "using pygrub; if instance with vdi %s does not boot "
+                      "correctly, try with image metadata.") % vdi_ref)
+        with vdi_attached_here(session, vdi_ref, read_only=True) as dev:
+            is_pv = _is_vdi_pv(dev)
     else:
         msg = _("Unknown image format %(disk_image_type)s") % locals()
         raise exception.NovaException(msg)

@@ -30,6 +30,7 @@ from nova.network import manager as network_manager
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import rpc
+from nova.openstack.common.rpc import common as rpc_common
 import nova.policy
 from nova import test
 from nova.tests import fake_ldap
@@ -139,7 +140,7 @@ class FlatNetworkTestCase(test.TestCase):
     def setUp(self):
         super(FlatNetworkTestCase, self).setUp()
         self.tempdir = tempfile.mkdtemp()
-        self.flags(logdir=self.tempdir)
+        self.flags(log_dir=self.tempdir)
         self.network = network_manager.FlatManager(host=HOST)
         self.network.instance_dns_domain = ''
         self.network.db = db
@@ -181,6 +182,7 @@ class FlatNetworkTestCase(test.TestCase):
                      'label': 'test%d' % nid,
                      'mac': 'DE:AD:BE:EF:00:%02x' % nid,
                      'rxtx_cap': 30,
+                     'vif_type': None,
                      'vif_uuid':
                         '00000000-0000-0000-0000-00000000000000%02d' % nid,
                      'should_create_vlan': False,
@@ -1612,7 +1614,7 @@ class FloatingIPTestCase(test.TestCase):
     def setUp(self):
         super(FloatingIPTestCase, self).setUp()
         self.tempdir = tempfile.mkdtemp()
-        self.flags(logdir=self.tempdir)
+        self.flags(log_dir=self.tempdir)
         self.network = TestFloatingIPManager()
         self.network.db = db
         self.project_id = 'testproject'
@@ -1929,6 +1931,49 @@ class FloatingIPTestCase(test.TestCase):
         self.network.add_virtual_interface(ctxt, 'fake_uuid', 'fake_net')
         self.assertEqual(macs, [])
 
+    def test_deallocate_client_exceptions(self):
+        """Ensure that FloatingIpNotFoundForAddress is wrapped"""
+        self.mox.StubOutWithMock(self.network.db, 'floating_ip_get_by_address')
+        self.network.db.floating_ip_get_by_address(
+            self.context, '1.2.3.4').AndRaise(
+                exception.FloatingIpNotFoundForAddress)
+        self.mox.ReplayAll()
+        self.assertRaises(rpc_common.ClientException,
+                          self.network.deallocate_floating_ip,
+                          self.context, '1.2.3.4')
+
+    def test_associate_client_exceptions(self):
+        """Ensure that FloatingIpNotFoundForAddress is wrapped"""
+        self.mox.StubOutWithMock(self.network.db, 'floating_ip_get_by_address')
+        self.network.db.floating_ip_get_by_address(
+            self.context, '1.2.3.4').AndRaise(
+                exception.FloatingIpNotFoundForAddress)
+        self.mox.ReplayAll()
+        self.assertRaises(rpc_common.ClientException,
+                          self.network.associate_floating_ip,
+                          self.context, '1.2.3.4', '10.0.0.1')
+
+    def test_disassociate_client_exceptions(self):
+        """Ensure that FloatingIpNotFoundForAddress is wrapped"""
+        self.mox.StubOutWithMock(self.network.db, 'floating_ip_get_by_address')
+        self.network.db.floating_ip_get_by_address(
+            self.context, '1.2.3.4').AndRaise(
+                exception.FloatingIpNotFoundForAddress)
+        self.mox.ReplayAll()
+        self.assertRaises(rpc_common.ClientException,
+                          self.network.disassociate_floating_ip,
+                          self.context, '1.2.3.4')
+
+    def test_get_floating_ip_client_exceptions(self):
+        """Ensure that FloatingIpNotFoundForAddress is wrapped"""
+        self.mox.StubOutWithMock(self.network.db, 'floating_ip_get')
+        self.network.db.floating_ip_get(self.context, 'fake-id').AndRaise(
+            exception.FloatingIpNotFound)
+        self.mox.ReplayAll()
+        self.assertRaises(rpc_common.ClientException,
+                          self.network.get_floating_ip,
+                          self.context, 'fake-id')
+
 
 class NetworkPolicyTestCase(test.TestCase):
     def setUp(self):
@@ -1959,7 +2004,7 @@ class InstanceDNSTestCase(test.TestCase):
     def setUp(self):
         super(InstanceDNSTestCase, self).setUp()
         self.tempdir = tempfile.mkdtemp()
-        self.flags(logdir=self.tempdir)
+        self.flags(log_dir=self.tempdir)
         self.network = TestFloatingIPManager()
         self.network.db = db
         self.project_id = 'testproject'

@@ -154,9 +154,6 @@ class FakeDriver(driver.ComputeDriver):
     def poll_rebooting_instances(self, timeout, instances):
         pass
 
-    def poll_rescued_instances(self, timeout):
-        pass
-
     def migrate_disk_and_power_off(self, context, instance, dest,
                                    instance_type, network_info,
                                    block_device_info=None):
@@ -410,23 +407,23 @@ class FakeVirtAPI(virtapi.VirtAPI):
         return db.instance_get_all_by_host(context, host)
 
     def aggregate_get_by_host(self, context, host, key=None):
-        return db.aggregate_get_by_host(context, host, key)
+        return db.aggregate_get_by_host(context, host, key=key)
 
-    def aggregate_metadata_add(self, context, aggregate_id, metadata,
+    def aggregate_metadata_add(self, context, aggregate, metadata,
                                set_delete=False):
-        return db.aggregate_metadata_add(context, aggregate_id, metadata,
-                                         set_delete)
+        return db.aggregate_metadata_add(context, aggregate['id'], metadata,
+                                         set_delete=set_delete)
 
-    def aggregate_metadata_delete(self, context, aggregate_id, key):
-        return db.aggregate_metadata_delete(context, aggregate_id, key)
+    def aggregate_metadata_delete(self, context, aggregate, key):
+        return db.aggregate_metadata_delete(context, aggregate['id'], key)
 
-    def security_group_get_by_instance(self, context, instance_uuid):
-        return db.security_group_get_by_instance(context, instance_uuid)
+    def security_group_get_by_instance(self, context, instance):
+        return db.security_group_get_by_instance(context, instance['id'])
 
     def security_group_rule_get_by_security_group(self, context,
-                                                  security_group_id):
-        return db.security_group_rule_get_by_security_group(context,
-                                                            security_group_id)
+                                                  security_group):
+        return db.security_group_rule_get_by_security_group(
+            context, security_group['id'])
 
     def provider_fw_rule_get_all(self, context):
         return db.provider_fw_rule_get_all(context)

@@ -109,16 +109,6 @@ global_opts = [
     cfg.ListOpt('enabled_apis',
                 default=['ec2', 'osapi_compute', 'metadata'],
                 help='a list of APIs to enable by default'),
-    cfg.ListOpt('osapi_compute_ext_list',
-                default=[],
-                help='Specify list of extensions to load when using osapi_'
-                     'compute_extension option with nova.api.openstack.'
-                     'compute.contrib.select_extensions'),
-    cfg.MultiStrOpt('osapi_compute_extension',
-                    default=[
-                      'nova.api.openstack.compute.contrib.standard_extensions'
-                      ],
-                    help='osapi compute extension to load'),
     cfg.StrOpt('osapi_compute_unique_server_name_scope',
                default='',
                help='When set, compute API will consider duplicate hostnames '
@@ -127,24 +117,6 @@ global_opts = [
     cfg.StrOpt('osapi_path',
                default='/v1.1/',
                help='the path prefix used to call the openstack api server'),
-    cfg.StrOpt('osapi_compute_link_prefix',
-               default=None,
-               help='Base URL that will be presented to users in links '
-                    'to the OpenStack Compute API'),
-    cfg.StrOpt('osapi_glance_link_prefix',
-               default=None,
-               help='Base URL that will be presented to users in links '
-                    'to glance resources'),
-    cfg.IntOpt('osapi_max_limit',
-               default=1000,
-               help='the maximum number of items returned in a single '
-                    'response from a collection resource'),
-    cfg.StrOpt('metadata_host',
-               default='$my_ip',
-               help='the ip for the metadata api server'),
-    cfg.IntOpt('metadata_port',
-               default=8775,
-               help='the port for the metadata api port'),
     cfg.StrOpt('default_instance_type',
                default='m1.small',
                help='default instance type to use, testing only'),
@@ -163,15 +135,6 @@ global_opts = [
     cfg.StrOpt('cert_manager',
                default='nova.cert.manager.CertManager',
                help='full class name for the Manager for cert'),
-    cfg.StrOpt('instance_dns_manager',
-               default='nova.network.noop_dns_driver.NoopDNSDriver',
-               help='full class name for the DNS Manager for instance IPs'),
-    cfg.StrOpt('instance_dns_domain',
-               default='',
-               help='full class name for the DNS Zone for instance IPs'),
-    cfg.StrOpt('floating_ip_dns_manager',
-               default='nova.network.noop_dns_driver.NoopDNSDriver',
-               help='full class name for the DNS Manager for floating IPs'),
     cfg.StrOpt('network_manager',
                default='nova.network.manager.VlanManager',
                help='full class name for the Manager for network'),
@@ -191,49 +154,16 @@ global_opts = [
     cfg.ListOpt('memcached_servers',
                 default=None,
                 help='Memcached servers or None for in process cache.'),
-    cfg.StrOpt('instance_usage_audit_period',
-               default='month',
-               help='time period to generate instance usages for.  '
-                    'Time period must be hour, day, month or year'),
     cfg.StrOpt('default_ephemeral_format',
                default=None,
                help='The default format an ephemeral_volume will be '
                     'formatted with on creation.'),
-    cfg.StrOpt('rootwrap_config',
-               default="/etc/nova/rootwrap.conf",
-               help='Path to the rootwrap configuration file to use for '
-                    'running commands as root'),
-    cfg.StrOpt('network_driver',
-               default='nova.network.linux_net',
-               help='Driver to use for network creation'),
     cfg.BoolOpt('use_ipv6',
                 default=False,
                 help='use ipv6'),
-    cfg.BoolOpt('enable_instance_password',
-                default=True,
-                help='Allows use of instance password during '
-                     'server creation'),
-    cfg.IntOpt('password_length',
-               default=12,
-               help='Length of generated instance admin passwords'),
-    cfg.BoolOpt('monkey_patch',
-                default=False,
-                help='Whether to log monkey patching'),
-    cfg.ListOpt('monkey_patch_modules',
-                default=[
-                  'nova.api.ec2.cloud:nova.notifier.api.notify_decorator',
-                  'nova.compute.api:nova.notifier.api.notify_decorator'
-                  ],
-                help='List of modules/decorators to monkey patch'),
     cfg.IntOpt('service_down_time',
                default=60,
                help='maximum time since last check-in for up service'),
-    cfg.ListOpt('isolated_images',
-                default=[],
-                help='Images to run on isolated host'),
-    cfg.ListOpt('isolated_hosts',
-                default=[],
-                help='Host reserved for specific images'),
     cfg.BoolOpt('use_cow_images',
                 default=True,
                 help='Whether to use cow images'),
@@ -255,7 +185,6 @@ cfg.CONF.register_opts(global_opts)
 
 
 def parse_args(argv, default_config_files=None):
-    cfg.CONF.disable_interspersed_args()
-    return argv[:1] + cfg.CONF(argv[1:],
-                               project='nova',
-                               default_config_files=default_config_files)
+    cfg.CONF(argv[1:],
+             project='nova',
+             default_config_files=default_config_files)

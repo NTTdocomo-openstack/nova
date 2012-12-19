@@ -1145,9 +1145,9 @@ def fixed_ip_get_by_address(context, address, session=None):
     # NOTE(sirp): shouldn't we just use project_only here to restrict the
     # results?
     if is_user_context(context) and result['instance_uuid'] is not None:
-        instance = instance_get_by_uuid(context.elevated(read_deleted='yes'),
-                                        result['instance_uuid'],
-                                        session)
+        instance = _instance_get_by_uuid(context.elevated(read_deleted='yes'),
+                                         result['instance_uuid'],
+                                         session)
         authorize_project_context(context, instance.project_id)
 
     return result
@@ -1455,7 +1455,7 @@ def instance_destroy(context, instance_uuid, constraint=None):
     session = get_session()
     with session.begin():
         if uuidutils.is_uuid_like(instance_uuid):
-            instance_ref = instance_get_by_uuid(context, instance_uuid,
+            instance_ref = _instance_get_by_uuid(context, instance_uuid,
                     session=session)
         else:
             raise exception.InvalidUUID(instance_uuid)
@@ -1484,7 +1484,12 @@ def instance_destroy(context, instance_uuid, constraint=None):
 
 
 @require_context
-def instance_get_by_uuid(context, uuid, session=None):
+def instance_get_by_uuid(context, uuid):
+    return _instance_get_by_uuid(context, uuid)
+
+
+@require_context
+def _instance_get_by_uuid(context, uuid, session=None):
     result = _build_instance_get(context, session=session).\
                 filter_by(uuid=uuid).\
                 first()
@@ -1496,8 +1501,8 @@ def instance_get_by_uuid(context, uuid, session=None):
 
 
 @require_context
-def instance_get(context, instance_id, session=None):
-    result = _build_instance_get(context, session=session).\
+def instance_get(context, instance_id):
+    result = _build_instance_get(context).\
                 filter_by(id=instance_id).\
                 first()
 
@@ -1598,7 +1603,7 @@ def instance_get_all_by_filters(context, filters, sort_key, sort_dir,
     # paginate query
     if marker is not None:
         try:
-            marker = instance_get_by_uuid(context, marker, session=session)
+            marker = _instance_get_by_uuid(context, marker, session=session)
         except exception.InstanceNotFound:
             raise exception.MarkerNotFound(marker)
     query_prefix = paginate_query(query_prefix, models.Instance, limit,
@@ -1838,8 +1843,8 @@ def _instance_update(context, instance_uuid, values, copy_old_instance=False):
         raise exception.InvalidUUID(instance_uuid)
 
     with session.begin():
-        instance_ref = instance_get_by_uuid(context, instance_uuid,
-                                            session=session)
+        instance_ref = _instance_get_by_uuid(context, instance_uuid,
+                                             session=session)
         # TODO(deva): remove extra_specs from here after it is included
         #             in system_metadata. Until then, the baremetal driver
         #             needs extra_specs added to instance[]
@@ -2130,9 +2135,14 @@ def network_delete_safe(context, network_id):
 
 
 @require_admin_context
-def network_disassociate(context, network_id):
-    network_update(context, network_id, {'project_id': None,
-                                         'host': None})
+def network_disassociate(context, network_id, disassociate_host,
+                         disassociate_project):
+    net_update = {}
+    if disassociate_project:
+        net_update['project_id'] = None
+    if disassociate_host:
+        net_update['host'] = None
+    network_update(context, network_id, net_update)
 
 
 @require_context
@@ -2234,6 +2244,11 @@ def network_get_associated_fixed_ips(context, network_id, host=None):
         cleaned['instance_created'] = datum[7]
         data.append(cleaned)
     return data
+
+
+def network_in_use_on_host(context, network_id, host):
+    fixed_ips = network_get_associated_fixed_ips(context, network_id, host)
+    return len(fixed_ips) > 0
 
 
 @require_admin_context

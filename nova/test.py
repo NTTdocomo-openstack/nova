@@ -191,6 +191,15 @@ class TestCase(testtools.TestCase):
         self.useFixture(fixtures.NestedTempfile())
         self.useFixture(fixtures.TempHomeDir())
 
+        if (os.environ.get('OS_STDOUT_NOCAPTURE') != 'True' and
+                os.environ.get('OS_STDOUT_NOCAPTURE') != '1'):
+            stdout = self.useFixture(fixtures.StringStream('stdout')).stream
+            self.useFixture(fixtures.MonkeyPatch('sys.stdout', stdout))
+        if (os.environ.get('OS_STDERR_NOCAPTURE') != 'True' and
+                os.environ.get('OS_STDERR_NOCAPTURE') != '1'):
+            stderr = self.useFixture(fixtures.StringStream('stderr')).stream
+            self.useFixture(fixtures.MonkeyPatch('sys.stderr', stderr))
+
         self.log_fixture = self.useFixture(fixtures.FakeLogger('nova'))
         self.useFixture(conf_fixture.ConfFixture(CONF))
 
@@ -222,3 +231,27 @@ class TestCase(testtools.TestCase):
     def start_service(self, name, host=None, **kwargs):
         svc = self.useFixture(ServiceFixture(name, host, **kwargs))
         return svc.service
+
+
+class APICoverage(object):
+
+    cover_api = None
+
+    def test_api_methods(self):
+        self.assertTrue(self.cover_api is not None)
+        api_methods = [x for x in dir(self.cover_api)
+                       if not x.startswith('_')]
+        test_methods = [x[5:] for x in dir(self)
+                        if x.startswith('test_')]
+        self.assertThat(
+            test_methods,
+            testtools.matchers.ContainsAll(api_methods))
+
+
+class TimeOverride(fixtures.Fixture):
+    """Fixture to start and remove time override."""
+
+    def setUp(self):
+        super(TimeOverride, self).setUp()
+        timeutils.set_time_override()
+        self.addCleanup(timeutils.clear_time_override)

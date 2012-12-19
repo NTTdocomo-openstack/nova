@@ -81,6 +81,9 @@ compute_opts = [
     cfg.StrOpt('security_group_handler',
                default='nova.network.sg.NullSecurityGroupHandler',
                help='The full class name of the security group handler class'),
+    cfg.StrOpt('security_group_api',
+               default='nova.compute.api.SecurityGroupAPI',
+               help='The full class name of the security API class'),
 ]
 
 
@@ -165,7 +168,9 @@ class API(base.Base):
 
         self.network_api = network_api or network.API()
         self.volume_api = volume_api or volume.API()
-        self.security_group_api = security_group_api or SecurityGroupAPI()
+        self.security_group_api = (security_group_api or
+                                   importutils.import_object(
+                                   CONF.security_group_api))
         self.sgh = importutils.import_object(CONF.security_group_handler)
         self.consoleauth_rpcapi = consoleauth_rpcapi.ConsoleAuthAPI()
         self.scheduler_rpcapi = scheduler_rpcapi.SchedulerAPI()
@@ -462,7 +467,7 @@ class API(base.Base):
 
             # Handle config_drive
             config_drive_id = None
-            if config_drive and config_drive is not True:
+            if config_drive and not utils.is_valid_boolstr(config_drive):
                 # config_drive is volume id
                 config_drive_id = config_drive
                 config_drive = None

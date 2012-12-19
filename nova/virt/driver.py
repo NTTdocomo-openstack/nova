@@ -635,11 +635,6 @@ class ComputeDriver(object):
         # TODO(Vek): Need to pass context in for access to auth_token
         raise NotImplementedError()
 
-    def poll_rescued_instances(self, timeout):
-        """Poll for rescued instances"""
-        # TODO(Vek): Need to pass context in for access to auth_token
-        raise NotImplementedError()
-
     def host_power_action(self, host, action):
         """Reboots, shuts down or powers up the host."""
         raise NotImplementedError()
@@ -771,6 +766,13 @@ class ComputeDriver(object):
         if not isinstance(stats, list):
             stats = [stats]
         return [s['hypervisor_hostname'] for s in stats]
+
+    def get_per_instance_usage(self):
+        """Get information about instance resource usage.
+
+        :returns: dict of  nova uuid => dict of usage info
+        """
+        return {}
 
 
 def load_compute_driver(virtapi, compute_driver=None):

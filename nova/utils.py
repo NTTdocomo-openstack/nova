@@ -53,19 +53,42 @@ from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils
 
-
-LOG = logging.getLogger(__name__)
+monkey_patch_opts = [
+    cfg.BoolOpt('monkey_patch',
+                default=False,
+                help='Whether to log monkey patching'),
+    cfg.ListOpt('monkey_patch_modules',
+                default=[
+                  'nova.api.ec2.cloud:nova.notifier.api.notify_decorator',
+                  'nova.compute.api:nova.notifier.api.notify_decorator'
+                  ],
+                help='List of modules/decorators to monkey patch'),
+]
+utils_opts = [
+    cfg.IntOpt('password_length',
+               default=12,
+               help='Length of generated instance admin passwords'),
+    cfg.BoolOpt('disable_process_locking',
+                default=False,
+                help='Whether to disable inter-process locks'),
+    cfg.StrOpt('instance_usage_audit_period',
+               default='month',
+               help='time period to generate instance usages for.  '
+                    'Time period must be hour, day, month or year'),
+    cfg.StrOpt('rootwrap_config',
+               default="/etc/nova/rootwrap.conf",
+               help='Path to the rootwrap configuration file to use for '
+                    'running commands as root'),
+]
 CONF = cfg.CONF
-CONF.register_opt(
-    cfg.BoolOpt('disable_process_locking', default=False,
-                help='Whether to disable inter-process locks'))
+CONF.register_opts(monkey_patch_opts)
+CONF.register_opts(utils_opts)
 CONF.import_opt('glance_host', 'nova.config')
 CONF.import_opt('glance_port', 'nova.config')
 CONF.import_opt('glance_protocol', 'nova.config')
-CONF.import_opt('instance_usage_audit_period', 'nova.config')
-CONF.import_opt('monkey_patch', 'nova.config')
-CONF.import_opt('rootwrap_config', 'nova.config')
 CONF.import_opt('service_down_time', 'nova.config')
+
+LOG = logging.getLogger(__name__)
 
 # Used for looking up extensions of text
 # to their 'multiplied' byte amount
@@ -413,7 +436,7 @@ def last_completed_audit_period(unit=None, before=None):
     return (begin, end)
 
 
-def generate_password(length=20, symbolgroups=DEFAULT_PASSWORD_SYMBOLS):
+def generate_password(length=None, symbolgroups=DEFAULT_PASSWORD_SYMBOLS):
     """Generate a random password from the supplied symbol groups.
 
     At least one symbol from each group will be included. Unpredictable
@@ -422,6 +445,9 @@ def generate_password(length=20, symbolgroups=DEFAULT_PASSWORD_SYMBOLS):
     Believed to be reasonably secure (with a reasonable password length!)
 
     """
+    if length is None:
+        length = CONF.password_length
+
     r = random.SystemRandom()
 
     # NOTE(jerdfelt): Some password policies require at least one character
