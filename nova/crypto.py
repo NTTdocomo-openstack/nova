@@ -99,7 +99,7 @@ def fetch_ca(project_id=None):
         project_id = None
     ca_file_path = ca_path(project_id)
     if not os.path.exists(ca_file_path):
-        raise exception.CryptoCAFileNotFound(project_id=project_id)
+        raise exception.CryptoCAFileNotFound(project=project_id)
     with open(ca_file_path, 'r') as cafile:
         return cafile.read()
 
@@ -161,7 +161,7 @@ def fetch_crl(project_id):
         project_id = None
     crl_file_path = crl_path(project_id)
     if not os.path.exists(crl_file_path):
-        raise exception.CryptoCRLFileNotFound(project_id)
+        raise exception.CryptoCRLFileNotFound(project=project_id)
     with open(crl_file_path, 'r') as crlfile:
         return crlfile.read()
 
@@ -295,8 +295,12 @@ def _sign_csr(csr_text, ca_folder):
         inbound = os.path.join(tmpdir, 'inbound.csr')
         outbound = os.path.join(tmpdir, 'outbound.csr')
 
-        with open(inbound, 'w') as csrfile:
-            csrfile.write(csr_text)
+        try:
+            with open(inbound, 'w') as csrfile:
+                csrfile.write(csr_text)
+        except IOError:
+            LOG.exception(_('Failed to write inbound.csr'))
+            raise
 
         LOG.debug(_('Flags path: %s'), ca_folder)
         start = os.getcwd()

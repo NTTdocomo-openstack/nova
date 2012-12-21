@@ -30,7 +30,7 @@ from nova.virt.libvirt import utils as libvirt_utils
 
 opts = [
     cfg.BoolOpt('baremetal_use_unsafe_iscsi',
-                 default=True,
+                 default=False,
                  help='Do not set this out of dev/test environments. '
                       'If a node does not have an fixed PXE IP address, '
                       'volumes are exported with globally opened ACL'),
@@ -125,14 +125,20 @@ def _delete_iscsi_export_tgtadm(tid):
             # OK, the tid is deleted
             return
         raise
-    raise exception.NovaException(_("tid %s is not deleted") % tid)
+    raise exception.NovaException(_(
+            'baremetal driver was unable to delete tid %s') % tid)
 
 
-def _list_backingstore_path():
+def _show_tgtadm():
     out, _ = utils.execute('tgtadm', '--lld', 'iscsi',
                            '--mode', 'target',
                            '--op', 'show',
                            run_as_root=True)
+    return out
+
+
+def _list_backingstore_path():
+    out = _show_tgtadm()
     l = []
     for line in out.split('\n'):
         m = re.search(r'Backing store path: (.*)$', line)
@@ -143,13 +149,10 @@ def _list_backingstore_path():
 
 
 def _get_next_tid():
-    out, _ = utils.execute('tgtadm', '--lld', 'iscsi',
-                           '--mode', 'target',
-                           '--op', 'show',
-                           run_as_root=True)
+    out = _show_tgtadm()
     last_tid = 0
     for line in out.split('\n'):
-        m = re.search(r'^Target \d+:', line)
+        m = re.search(r'^Target (\d+):', line)
         if m:
             tid = int(m.group(1))
             if last_tid < tid:
@@ -158,11 +161,8 @@ def _get_next_tid():
 
 
 def _find_tid(iqn):
-    out, _ = utils.execute('tgtadm', '--lld', 'iscsi',
-                           '--mode', 'target',
-                           '--op', 'show',
-                           run_as_root=True)
-    pattern = r'^Target \d+: *' + re.escape(iqn)
+    out = _show_tgtadm()
+    pattern = r'^Target (\d+): *' + re.escape(iqn)
     for line in out.split('\n'):
         m = re.search(pattern, line)
         if m:
@@ -189,8 +189,8 @@ class VolumeDriver(object):
         if not self._initiator:
             self._initiator = libvirt_utils.get_iscsi_initiator()
             if not self._initiator:
-                LOG.warn(_('Could not determine iscsi initiator name'),
-                         instance=instance)
+                LOG.warn(_('Could not determine iscsi initiator name '
+                           'for instance %s') % instance)
         return {
             'ip': CONF.my_ip,
             'initiator': self._initiator,
@@ -231,9 +231,9 @@ class LibvirtVolumeDriver(VolumeDriver):
         pxe_ip = bmdb.bm_pxe_ip_get_by_bm_node_id(ctx, node['id'])
         if not pxe_ip:
             if not CONF.baremetal_use_unsafe_iscsi:
-                raise exception.NovaException(
-                        _("No fixed PXE IP is associated to %s")
-                        % instance_name)
+                raise exception.NovaException(_(
+                    'No fixed PXE IP is associated to %s') % instance_name)
+
         mount_device = mountpoint.rpartition("/")[2]
         self._volume_driver_method('connect_volume',
                                    connection_info,
@@ -242,6 +242,7 @@ class LibvirtVolumeDriver(VolumeDriver):
         iqn = _get_iqn(instance_name, mountpoint)
         tid = _get_next_tid()
         _create_iscsi_export_tgtadm(device_path, tid, iqn)
+
         if pxe_ip:
             _allow_iscsi_tgtadm(tid, pxe_ip['address'])
         else:
@@ -253,7 +254,6 @@ class LibvirtVolumeDriver(VolumeDriver):
             # out of dev/test environments.
             # TODO(NTTdocomo): support CHAP
             _allow_iscsi_tgtadm(tid, 'ALL')
-        return True
 
     @exception.wrap_exception()
     def detach_volume(self, connection_info, instance_name, mountpoint):
@@ -264,7 +264,7 @@ class LibvirtVolumeDriver(VolumeDriver):
             if tid is not None:
                 _delete_iscsi_export_tgtadm(tid)
             else:
-                LOG.warn(_("tid for %s not found") % iqn)
+                LOG.warn(_('detach volume could not find tid for %s') % iqn)
         finally:
             self._volume_driver_method('disconnect_volume',
                                        connection_info,

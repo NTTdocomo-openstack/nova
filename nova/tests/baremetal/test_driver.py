@@ -90,12 +90,11 @@ def _create_baremetal_stuff():
     return node
 
 
-class BaremetalDriverSpawnTestCase(test.TestCase):
+class BaremetalDriverSpawnTestCase(base.Database):
 
     def setUp(self):
-        self.flags(**COMMON_FLAGS)
-        base._reset_bmdb()
         super(BaremetalDriverSpawnTestCase, self).setUp()
+        self.flags(**COMMON_FLAGS)
         fake_image.stub_out_image_service(self.stubs)
 
         self.node = _create_baremetal_stuff()
@@ -115,10 +114,7 @@ class BaremetalDriverSpawnTestCase(test.TestCase):
                 admin_password='testpass',
                 network_info=self.network_info,
                 block_device_info=self.block_device_info)
-
-    def tearDown(self):
-        super(BaremetalDriverSpawnTestCase, self).tearDown()
-        fake_image.FakeImageService_reset()
+        self.addCleanup(fake_image.FakeImageService_reset)
 
     def test_ok(self):
         self.instance['node'] = str(self.node_id)
@@ -150,21 +146,17 @@ class BaremetalDriverSpawnTestCase(test.TestCase):
                 **self.kwargs)
 
 
-class BaremetalDriverTestCase(test_virt_drivers._VirtDriverTestCase):
+class BaremetalDriverTestCase(test_virt_drivers._VirtDriverTestCase,
+                              base.Database):
 
     def setUp(self):
-        # Point _VirtDriverTestCase at the right module
+        super(BaremetalDriverTestCase, self).setUp()
         self.driver_module = 'nova.virt.baremetal.BareMetalDriver'
         self.flags(**COMMON_FLAGS)
-        base._reset_bmdb()
         self.node = _create_baremetal_stuff()
         self.node_id = self.node['id']
-        super(BaremetalDriverTestCase, self).setUp()
         fake_image.stub_out_image_service(self.stubs)
-
-    def tearDown(self):
-        super(BaremetalDriverTestCase, self).tearDown()
-        fake_image.FakeImageService_reset()
+        self.addCleanup(fake_image.FakeImageService_reset)
 
     def _get_running_instance(self):
         instance_ref = test_utils.get_test_instance()

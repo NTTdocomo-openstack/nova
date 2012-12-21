@@ -22,6 +22,7 @@ import sys
 
 from nova import context
 from nova import test
+from nova.tests.baremetal.db import base
 from nova.virt.baremetal import db as bmdb
 
 
@@ -37,10 +38,9 @@ bm_man = imp.load_source('bm_man', BM_MAN_PATH)
 sys.dont_write_bytecode = False
 
 
-class BareMetalDbCommandsTestCase(test.TestCase):
+class BareMetalDbCommandsTestCase(base.BMDBTestCase):
     def setUp(self):
         super(BareMetalDbCommandsTestCase, self).setUp()
-        self.flags(baremetal_sql_connection='sqlite:///:memory:')
         self.commands = bm_man.BareMetalDbCommands()
 
     def test_sync_and_version(self):
@@ -49,12 +49,10 @@ class BareMetalDbCommandsTestCase(test.TestCase):
         self.assertTrue(v > 0)
 
 
-class BareMetalNodeCommandsTestCase(test.TestCase):
+class BareMetalNodeCommandsTestCase(base.BMDBTestCase):
     def setUp(self):
         super(BareMetalNodeCommandsTestCase, self).setUp()
-        self.flags(baremetal_sql_connection='sqlite:///:memory:')
         self.commands = bm_man.BareMetalNodeCommands()
-        self.context = context.get_admin_context()
         self.stubs.Set(context, "get_admin_context", lambda: self.context)
         self.node = {"host": "host",
                      "cpus": 8,
@@ -95,12 +93,10 @@ class BareMetalNodeCommandsTestCase(test.TestCase):
         self.commands.delete(node_id=12345)
 
 
-class BareMetalInterfaceCommandsTestCase(test.TestCase):
+class BareMetalInterfaceCommandsTestCase(base.BMDBTestCase):
     def setUp(self):
         super(BareMetalInterfaceCommandsTestCase, self).setUp()
-        self.flags(baremetal_sql_connection='sqlite:///:memory:')
         self.commands = bm_man.BareMetalInterfaceCommands()
-        self.context = context.get_admin_context()
         self.stubs.Set(context, "get_admin_context", lambda: self.context)
 
     def test_create(self):
@@ -127,12 +123,10 @@ class BareMetalInterfaceCommandsTestCase(test.TestCase):
         self.commands.delete(if_id=12345)
 
 
-class BareMetalPxeIpCommandsTestCase(test.TestCase):
+class BareMetalPxeIpCommandsTestCase(base.BMDBTestCase):
     def setUp(self):
         super(BareMetalPxeIpCommandsTestCase, self).setUp()
-        self.flags(baremetal_sql_connection='sqlite:///:memory:')
         self.commands = bm_man.BareMetalPxeIpCommands()
-        self.context = context.get_admin_context()
         self.stubs.Set(context, "get_admin_context", lambda: self.context)
 
     def test_create(self):

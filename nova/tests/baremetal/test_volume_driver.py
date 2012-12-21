@@ -128,14 +128,39 @@ iqn.2010-10.org.openstack:volume-00000001-lun-1
 """
 
 
-class BaremetalVolumeTestCase(test.TestCase):
+def fake_show_tgtadm():
+    return SHOW_OUTPUT
+
+
+class BareMetalVolumeTestCase(test.TestCase):
+
+    def setUp(self):
+        super(BareMetalVolumeTestCase, self).setUp()
+        self.stubs.Set(volume_driver, '_show_tgtadm', fake_show_tgtadm)
 
     def test_list_backingstore_path(self):
-        self.stubs.Set(utils, 'execute', lambda *args,
-                       **kwargs: (SHOW_OUTPUT, ''))
         l = volume_driver._list_backingstore_path()
         self.assertEqual(len(l), 3)
         self.assertIn('/dev/nova-volumes/volume-00000001', l)
         self.assertIn('/dev/nova-volumes/volume-00000002', l)
-        self.assertIn('/dev/disk/by-path/ip-172.17.12.10:3260-iscsi-\
-iqn.2010-10.org.openstack:volume-00000001-lun-1', l)
+        self.assertIn('/dev/disk/by-path/ip-172.17.12.10:3260-iscsi-'
+                      'iqn.2010-10.org.openstack:volume-00000001-lun-1', l)
+
+    def test_get_next_tid(self):
+        tid = volume_driver._get_next_tid()
+        self.assertEqual(1000002, tid)
+
+    def test_find_tid_found(self):
+        tid = volume_driver._find_tid(
+                'iqn.2010-10.org.openstack.baremetal:1000001-dev.vdc')
+        self.assertEqual(1000001, tid)
+
+    def test_find_tid_not_found(self):
+        tid = volume_driver._find_tid(
+                'iqn.2010-10.org.openstack.baremetal:1000002-dev.vdc')
+        self.assertTrue(tid is None)
+
+    def test_get_iqn(self):
+        self.flags(baremetal_iscsi_iqn_prefix='iqn.2012-12.a.b')
+        iqn = volume_driver._get_iqn('instname', '/dev/vdx')
+        self.assertEquals('iqn.2012-12.a.b:instname-dev-vdx', iqn)

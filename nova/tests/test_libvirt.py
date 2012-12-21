@@ -48,6 +48,7 @@ from nova.tests import fake_network
 import nova.tests.image.fake
 from nova.tests import matchers
 from nova import utils
+from nova import version
 from nova.virt.disk import api as disk
 from nova.virt import driver
 from nova.virt import fake
@@ -596,6 +597,7 @@ class LibvirtConnTestCase(test.TestCase):
 
         nova.tests.image.fake.stub_out_image_service(self.stubs)
         self.test_instance = {
+                'uuid': '32dfcb37-5af1-552b-357c-be8c3aa38310',
                 'memory_kb': '1024000',
                 'basepath': '/some/path',
                 'bridge_name': 'br100',
@@ -1072,11 +1074,25 @@ class LibvirtConnTestCase(test.TestCase):
         libvirt_driver.LibvirtDriver._conn.lookupByID = self.fake_lookup
         libvirt_driver.LibvirtDriver._conn.numOfDomains = lambda: 2
         libvirt_driver.LibvirtDriver._conn.listDomainsID = lambda: [0, 1]
+        libvirt_driver.LibvirtDriver._conn.listDefinedDomains = lambda: []
 
         self.mox.ReplayAll()
         conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
         instances = conn.list_instances()
         # Only one should be listed, since domain with ID 0 must be skiped
+        self.assertEquals(len(instances), 1)
+
+    def test_list_defined_instances(self):
+        self.mox.StubOutWithMock(libvirt_driver.LibvirtDriver, '_conn')
+        libvirt_driver.LibvirtDriver._conn.lookupByID = self.fake_lookup
+        libvirt_driver.LibvirtDriver._conn.numOfDomains = lambda: 1
+        libvirt_driver.LibvirtDriver._conn.listDomainsID = lambda: [0]
+        libvirt_driver.LibvirtDriver._conn.listDefinedDomains = lambda: [1]
+
+        self.mox.ReplayAll()
+        conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        instances = conn.list_instances()
+        # Only one defined domain should be listed
         self.assertEquals(len(instances), 1)
 
     def test_list_instances_when_instance_deleted(self):
@@ -1088,6 +1104,7 @@ class LibvirtConnTestCase(test.TestCase):
         libvirt_driver.LibvirtDriver._conn.lookupByID = fake_lookup
         libvirt_driver.LibvirtDriver._conn.numOfDomains = lambda: 1
         libvirt_driver.LibvirtDriver._conn.listDomainsID = lambda: [0, 1]
+        libvirt_driver.LibvirtDriver._conn.listDefinedDomains = lambda: []
 
         self.mox.ReplayAll()
         conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
@@ -1202,6 +1219,7 @@ class LibvirtConnTestCase(test.TestCase):
         libvirt_driver.LibvirtDriver._conn.listDomainsID = lambda: range(4)
         libvirt_driver.LibvirtDriver._conn.lookupByID = fake_lookup
         libvirt_driver.LibvirtDriver._conn.lookupByName = fake_lookup_name
+        libvirt_driver.LibvirtDriver._conn.listDefinedDomains = lambda: []
 
         self.mox.ReplayAll()
         conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
@@ -1814,6 +1832,43 @@ class LibvirtConnTestCase(test.TestCase):
             check_list.append(check)
 
             if hypervisor_type in ['qemu', 'kvm']:
+                xpath = "./sysinfo/system/entry"
+                check = (lambda t: t.findall(xpath)[0].get("name"),
+                         "manufacturer")
+                check_list.append(check)
+                check = (lambda t: t.findall(xpath)[0].text,
+                         version.vendor_string())
+                check_list.append(check)
+
+                check = (lambda t: t.findall(xpath)[1].get("name"),
+                         "product")
+                check_list.append(check)
+                check = (lambda t: t.findall(xpath)[1].text,
+                         version.product_string())
+                check_list.append(check)
+
+                check = (lambda t: t.findall(xpath)[2].get("name"),
+                         "version")
+                check_list.append(check)
+                check = (lambda t: t.findall(xpath)[2].text,
+                         version.version_string_with_package())
+                check_list.append(check)
+
+                check = (lambda t: t.findall(xpath)[3].get("name"),
+                         "serial")
+                check_list.append(check)
+                check = (lambda t: t.findall(xpath)[3].text,
+                         "cef19ce0-0ca2-11df-855d-b19fbce37686")
+                check_list.append(check)
+
+                check = (lambda t: t.findall(xpath)[4].get("name"),
+                         "uuid")
+                check_list.append(check)
+                check = (lambda t: t.findall(xpath)[4].text,
+                         instance['uuid'])
+                check_list.append(check)
+
+            if hypervisor_type in ['qemu', 'kvm']:
                 check = (lambda t: t.findall('./devices/serial')[0].get(
                         'type'), 'file')
                 check_list.append(check)
@@ -2042,6 +2097,37 @@ class LibvirtConnTestCase(test.TestCase):
         conn.check_can_live_migrate_source(self.context, instance_ref,
                                            dest_check_data)
 
+    def test_check_can_live_migrate_source_vol_backed_works_correctly(self):
+        instance_ref = db.instance_create(self.context, self.test_instance)
+        dest_check_data = {"filename": "file",
+                           "block_migration": False,
+                           "disk_over_commit": False,
+                           "disk_available_mb": 1024,
+                           "is_volume_backed": True}
+        conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        self.mox.StubOutWithMock(conn, "_check_shared_storage_test_file")
+        conn._check_shared_storage_test_file("file").AndReturn(False)
+        self.mox.ReplayAll()
+        ret = conn.check_can_live_migrate_source(self.context, instance_ref,
+                                                 dest_check_data)
+        self.assertTrue(type(ret) == dict)
+        self.assertTrue('is_shared_storage' in ret)
+
+    def test_check_can_live_migrate_source_vol_backed_fails(self):
+        instance_ref = db.instance_create(self.context, self.test_instance)
+        dest_check_data = {"filename": "file",
+                           "block_migration": False,
+                           "disk_over_commit": False,
+                           "disk_available_mb": 1024,
+                           "is_volume_backed": False}
+        conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        self.mox.StubOutWithMock(conn, "_check_shared_storage_test_file")
+        conn._check_shared_storage_test_file("file").AndReturn(False)
+        self.mox.ReplayAll()
+        self.assertRaises(exception.InvalidSharedStorage,
+                          conn.check_can_live_migrate_source, self.context,
+                          instance_ref, dest_check_data)
+
     def test_check_can_live_migrate_dest_fail_shared_storage_with_blockm(self):
         instance_ref = db.instance_create(self.context, self.test_instance)
         dest_check_data = {"filename": "file",
@@ -2169,6 +2255,42 @@ class LibvirtConnTestCase(test.TestCase):
         self.mox.ReplayAll()
         result = conn.pre_live_migration(c, inst_ref, vol, nw_info)
         self.assertEqual(result, None)
+
+    def test_pre_live_migration_vol_backed_works_correctly_mocked(self):
+        # Creating testdata, using temp dir.
+        with utils.tempdir() as tmpdir:
+            self.flags(instances_path=tmpdir)
+            vol = {'block_device_mapping': [
+                  {'connection_info': 'dummy', 'mount_device': '/dev/sda'},
+                  {'connection_info': 'dummy', 'mount_device': '/dev/sdb'}]}
+            conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+
+            class FakeNetworkInfo():
+                def fixed_ips(self):
+                    return ["test_ip_addr"]
+            inst_ref = db.instance_create(self.context, self.test_instance)
+            c = context.get_admin_context()
+            nw_info = FakeNetworkInfo()
+            # Creating mocks
+            self.mox.StubOutWithMock(conn, "volume_driver_method")
+            for v in vol['block_device_mapping']:
+                conn.volume_driver_method('connect_volume',
+                                          v['connection_info'],
+                                          v['mount_device'].
+                                                    rpartition("/")[2])
+            self.mox.StubOutWithMock(conn, 'plug_vifs')
+            conn.plug_vifs(mox.IsA(inst_ref), nw_info)
+            self.mox.ReplayAll()
+            migrate_data = {'is_shared_storage': False,
+                            'is_volume_backed': True,
+                            'block_migration': False
+                            }
+            ret = conn.pre_live_migration(c, inst_ref, vol, nw_info,
+                                          migrate_data)
+            self.assertEqual(ret, None)
+            self.assertTrue(os.path.exists('%s/%s/' %
+                           (tmpdir, inst_ref.name)))
+        db.instance_destroy(self.context, inst_ref['uuid'])
 
     def test_pre_block_migration_works_correctly(self):
         # Replace instances_path since this testcase creates tmpfile
@@ -3218,6 +3340,20 @@ class IptablesFirewallTestCase(test.TestCase):
       ':POSTROUTING ACCEPT [5063:386098]',
     ]
 
+    in_mangle_rules = [
+        '# Generated by iptables-save v1.4.12 on Tue Dec 18 15:50:25 201;',
+        '*mangle',
+        ':PREROUTING ACCEPT [241:39722]',
+        ':INPUT ACCEPT [230:39282]',
+        ':FORWARD ACCEPT [0:0]',
+        ':OUTPUT ACCEPT [266:26558]',
+        ':POSTROUTING ACCEPT [267:26590]',
+        '-A POSTROUTING -o virbr0 -p udp -m udp --dport 68 -j CHECKSUM '
+        '--checksum-fill',
+        'COMMIT',
+        '# Completed on Tue Dec 18 15:50:25 2012',
+    ]
+
     in_filter_rules = [
       '# Generated by iptables-save v1.4.4 on Mon Dec  6 11:54:13 2010',
       '*filter',
@@ -3319,6 +3455,8 @@ class IptablesFirewallTestCase(test.TestCase):
                 return '\n'.join(self.in_filter_rules), None
             if cmd == ('iptables-save', '-c', '-t', 'nat'):
                 return '\n'.join(self.in_nat_rules), None
+            if cmd == ('iptables-save', '-c', '-t', 'mangle'):
+                return '\n'.join(self.in_mangle_rules), None
             if cmd == ('iptables-restore', '-c',):
                 lines = process_input.split('\n')
                 if '*filter' in lines:

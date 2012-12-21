@@ -23,6 +23,7 @@ import tempfile
 import time
 
 from nova import test
+from nova.tests.baremetal.db import base
 
 
 TOPDIR = os.path.normpath(os.path.join(
@@ -63,7 +64,7 @@ append initrd=ramdisk root=UUID=12345678-1234-1234-1234-1234567890abcdef
 """
 
 
-class WorkerTestCase(test.TestCase):
+class WorkerTestCase(base.BMDBTestCase):
     def setUp(self):
         super(WorkerTestCase, self).setUp()
         self.worker = bmdh.Worker()

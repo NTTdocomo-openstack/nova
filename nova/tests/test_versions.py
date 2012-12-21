@@ -14,7 +14,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import __builtin__
+import os
+import StringIO
 
+from nova.openstack.common import cfg
 from nova import test
 from nova import version
 
@@ -31,6 +35,7 @@ class VersionTestCase(test.TestCase):
         self.version.version_info = {'branch_nick': u'LOCALBRANCH',
                                     'revision_id': 'LOCALREVISION',
                                     'revno': 0}
+        self.version.NOVA_PACKAGE = "g9ec3421"
 
     def test_version_string_is_good(self):
         """Ensure version string works"""
@@ -48,12 +53,34 @@ class VersionTestCase(test.TestCase):
         self.assertEqual(self.version.canonical_version_string(),
                         self.version.version_string())
 
-    def test_vcs_version_string_is_good(self):
-        """Ensure uninstalled code generates local """
-        self.assertEqual("LOCALBRANCH:LOCALREVISION",
-                        self.version.vcs_version_string())
-
-    def test_version_string_with_vcs_is_good(self):
+    def test_version_string_with_package_is_good(self):
         """Ensure uninstalled code get version string"""
-        self.assertEqual("2012.10-LOCALBRANCH:LOCALREVISION",
-                        self.version.version_string_with_vcs())
+        self.assertEqual("2012.10-g9ec3421",
+                        self.version.version_string_with_package())
+
+    def test_release_file(self):
+        version.loaded = False
+        real_open = __builtin__.open
+        real_find_file = cfg.CONF.find_file
+
+        def fake_find_file(self, name):
+            if name == "release":
+                return "/etc/nova/release"
+            return real_find_file(self, name)
+
+        def fake_open(path, *args, **kwargs):
+            if path == "/etc/nova/release":
+                data = """[Nova]
+vendor = ACME Corporation
+product = ACME Nova
+package = 1337"""
+                return StringIO.StringIO(data)
+
+            return real_open(path, *args, **kwargs)
+
+        self.stubs.Set(__builtin__, 'open', fake_open)
+        self.stubs.Set(cfg.ConfigOpts, 'find_file', fake_find_file)
+
+        self.assertEqual(version.vendor_string(), "ACME Corporation")
+        self.assertEqual(version.product_string(), "ACME Nova")
+        self.assertEqual(version.package_string(), "1337")

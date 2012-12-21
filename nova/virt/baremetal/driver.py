@@ -238,6 +238,8 @@ class BareMetalDriver(driver.ComputeDriver):
         except exception.InstanceNotFound:
             # TODO(deva): refactor so that dangling files can be cleaned
             #             up even after a failed boot or delete
+            LOG.warning(_("Delete called on non-existing instance %s")
+                    % instance['uuid'])
             return
 
         var = self.baremetal_nodes.define_vars(instance, network_info,

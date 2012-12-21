@@ -34,8 +34,8 @@ class BareMetalVIFDriver(VIFDriver):
         pass
 
     def plug(self, instance, vif):
-        LOG.debug(_("plug: instance_uuid=%(uuid)s vif=%(vif)s"),
-                  {'uuid': instance['uuid'], 'vif': vif})
+        LOG.debug(_("plug: instance_uuid=%(uuid)s vif=%(vif)s")
+                  % {'uuid': instance['uuid'], 'vif': vif})
         network, mapping = vif
         vif_uuid = mapping['vif_uuid']
         ctx = context.get_admin_context()
@@ -47,8 +47,8 @@ class BareMetalVIFDriver(VIFDriver):
         for pif in pifs:
             if not pif['vif_uuid']:
                 bmdb.bm_interface_set_vif_uuid(ctx, pif['id'], vif_uuid)
-                LOG.debug(_("pif:%(id)s is plugged (vif_uuid=%(vif_uuid)s)"),
-                          {'id': pif['id'], 'vif_uuid': vif_uuid})
+                LOG.debug(_("pif:%(id)s is plugged (vif_uuid=%(vif_uuid)s)")
+                          % {'id': pif['id'], 'vif_uuid': vif_uuid})
                 self._after_plug(instance, network, mapping, pif)
                 return
 
@@ -68,8 +68,8 @@ class BareMetalVIFDriver(VIFDriver):
         try:
             pif = bmdb.bm_interface_get_by_vif_uuid(ctx, vif_uuid)
             bmdb.bm_interface_set_vif_uuid(ctx, pif['id'], None)
-            LOG.debug(_("pif:%(id)s is unplugged (vif_uuid=%(vif_uuid)s)"),
-                      {'id': pif['id'], 'vif_uuid': vif_uuid})
+            LOG.debug(_("pif:%(id)s is unplugged (vif_uuid=%(vif_uuid)s)")
+                      % {'id': pif['id'], 'vif_uuid': vif_uuid})
             self._after_unplug(instance, network, mapping, pif)
         except exception.NovaException:
-            LOG.warn(_("no pif for vif_uuid=%s"), vif_uuid)
+            LOG.warn(_("no pif for vif_uuid=%s") % vif_uuid)

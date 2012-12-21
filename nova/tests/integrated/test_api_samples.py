@@ -19,7 +19,7 @@ import inspect
 import os
 import re
 import urllib
-import uuid
+import uuid as uuid_lib
 
 from lxml import etree
 
@@ -228,9 +228,12 @@ class ApiSampleTestBase(integrated_helpers._IntegratedTestBase):
     def _verify_response(self, name, subs, response):
         expected = self._read_template(name)
         expected = self._objectify(expected)
-        with file(self._get_sample(name)) as sample:
-            sample_data = sample.read()
         response_data = response.read()
+        try:
+            with file(self._get_sample(name)) as sample:
+                sample_data = sample.read()
+        except IOError:
+            sample_data = "{}"
 
         try:
             response_result = self._verify_something(subs, expected,
@@ -452,6 +455,16 @@ class ServersSampleAllExtensionJsonTest(ServersSampleJsonTest):
 
 class ServersSampleAllExtensionXmlTest(ServersSampleXmlTest):
     all_extensions = True
+
+
+class ServersSampleHideAddressesJsonTest(ServersSampleJsonTest):
+    extension_name = '.'.join(('nova.api.openstack.compute.contrib',
+                               'hide_server_addresses',
+                               'Hide_server_addresses'))
+
+
+class ServersSampleHideAddressesXMLTest(ServersSampleHideAddressesJsonTest):
+    ctype = 'xml'
 
 
 class ServersMetadataJsonTest(ServersSampleBase):
@@ -938,7 +951,7 @@ class SchedulerHintsJsonTest(ApiSampleTestBase):
     def test_scheduler_hints_post(self):
         """Get api sample of scheduler hint post request"""
         hints = {'image_id': fake.get_valid_image_id(),
-                 'image_near': str(uuid.uuid4())
+                 'image_near': str(uuid_lib.uuid4())
         }
         response = self._do_post('servers', 'scheduler-hints-post-req',
                                  hints)
@@ -1182,7 +1195,7 @@ class KeyPairsSampleJsonTest(ApiSampleTestBase):
 
     def test_keypairs_post(self, public_key=None):
         """Get api sample of key pairs post request"""
-        key_name = 'keypair-' + str(uuid.uuid4())
+        key_name = 'keypair-' + str(uuid_lib.uuid4())
         response = self._do_post('os-keypairs', 'keypairs-post-req',
                                  {'keypair_name': key_name})
         subs = self._get_regexes()
@@ -1196,7 +1209,7 @@ class KeyPairsSampleJsonTest(ApiSampleTestBase):
 
     def test_keypairs_import_key_post(self):
         """Get api sample of key pairs post to import user's key"""
-        key_name = 'keypair-' + str(uuid.uuid4())
+        key_name = 'keypair-' + str(uuid_lib.uuid4())
         subs = {
             'keypair_name': key_name,
             'public_key': "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQDx8nkQv/zgGg"
@@ -1321,7 +1334,7 @@ class CloudPipeSampleJsonTest(ApiSampleTestBase):
     def test_cloud_pipe_create(self):
         """Get api samples of cloud pipe extension creation"""
         self.flags(vpn_image_id=fake.get_valid_image_id())
-        project = {'project_id': 'cloudpipe-' + str(uuid.uuid4())}
+        project = {'project_id': 'cloudpipe-' + str(uuid_lib.uuid4())}
         response = self._do_post('os-cloudpipe', 'cloud-pipe-create-req',
                                  project)
         self.assertEqual(response.status, 200)
