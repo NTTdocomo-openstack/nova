@@ -119,8 +119,204 @@ class BareMetalDbCommands(object):
         return v
 
 
+class BareMetalNodeCommands(object):
+    """Class for mangaging bare-metal nodes."""
+
+    @args('--host', dest='host', metavar='<host>',
+          help='Compute service\'s hostname')
+    @args('--cpus', dest='cpus', metavar='<cpus>',
+          help='CPU count')
+    @args('--memory_mb', dest='memory_mb', metavar='<memory_mb>',
+          help='Memory size in MB')
+    @args('--local_gb', dest='local_gb', metavar='<local_gb>',
+          help='Disk size in GB')
+    @args('--pm_address', dest='pm_address', metavar='<pm_address>',
+          help='Power manager address')
+    @args('--pm_user', dest='pm_user', metavar='<pm_user>',
+          help='Power manager username')
+    @args('--pm_password', dest='pm_password', metavar='<pm_password>',
+          help='Power manager password')
+    @args('--terminal_port', dest='terminal_port', metavar='<terminal_port>',
+          help='TCP port for terminal access')
+    @args('--prov_mac_address', dest='prov_mac_address',
+          metavar='<prov_mac_address>',
+          help='MAC address of provisioning interface '
+               'in the form of xx:xx:xx:xx:xx:xx')
+    @args('--prov_vlan_id', dest='prov_vlan_id', metavar='<prov_vlan_id>',
+          help='VLAN ID (optional)')
+    def create(self, host, cpus, memory_mb, local_gb, pm_address, pm_user,
+               pm_password, prov_mac_address, prov_vlan_id=None,
+               terminal_port=None):
+        """Creates bare-metal nodes"""
+        values = {
+            'service_host': host,
+            'cpus': cpus,
+            'memory_mb': memory_mb,
+            'local_gb': local_gb,
+            'pm_address': pm_address,
+            'pm_user': pm_user,
+            'pm_password': pm_password,
+            'prov_mac_address': prov_mac_address,
+            'prov_vlan_id': prov_vlan_id,
+            'terminal_port': terminal_port,
+            'registration_status': 'done',
+            'task_state': None,
+        }
+        ctx = context.get_admin_context()
+        r = bmdb.bm_node_create(ctx, values)
+        print r['id']
+
+    @args('--id', dest='node_id', metavar='<id>',
+            help='ID of bare-metal node')
+    def delete(self, node_id):
+        """Deletes bare-metal nodes"""
+        ctx = context.get_admin_context()
+        bmdb.bm_node_destroy(ctx, node_id)
+
+    def list(self):
+        """Show a list of all bare-metal nodes"""
+        fmt = "%-8s  %-12s  %-36s  %-6s  %-8s  %-8s  %-16s  %-16s " + \
+              "%-5s  %-18s  %-4s"
+        print fmt % (
+                    _('ID'),
+                    _('SERVICE_HOST'),
+                    _('INSTANCE_UUID'),
+                    _('CPUS'),
+                    _('Memory'),
+                    _('Disk'),
+                    _('PM_Address'),
+                    _('PM_User'),
+                    _('TERMINAL_PORT'),
+                    _('PROV_MAC'),
+                    _('PROV_VLAN'))
+        ctxt = context.get_admin_context()
+        for node in bmdb.bm_node_get_all(ctxt):
+            print fmt % (node['id'], node['service_host'],
+                         node['instance_uuid'],
+                         node['cpus'], node['memory_mb'], node['local_gb'],
+                         node['pm_address'], node['pm_user'],
+                         node['terminal_port'],
+                         node['prov_mac_address'], node['prov_vlan_id'])
+        print
+
+
+class BareMetalInterfaceCommands(object):
+    """Class for mangaging bare-metal nodes' NICs."""
+
+    @args('--node_id', dest='node_id', metavar='<node_id>',
+            help='ID of bare-metal node')
+    @args('--mac_address', dest='mac_address', metavar='<mac_address>',
+            help='MAC address in the form of xx:xx:xx:xx:xx:xx')
+    @args('--datapath_id', dest='datapath_id', metavar='<datapath_id>',
+            help='OpenFlow datapath ID (put 0 if not use OpenFlow)')
+    @args('--port_no', dest='port_no', metavar='<port_no>',
+            help='OpenFlow port number (put 0 if not use OpenFlow)')
+    def create(self, node_id, mac_address, datapath_id, port_no):
+        """Creates bare-metal nodes' NICs"""
+        datapath_id = datapath_id.lower()
+        if not datapath_id.startswith("0x"):
+            datapath_id = "0x" + datapath_id
+        ctx = context.get_admin_context()
+        node_ref = bmdb.bm_node_get(ctx, node_id)
+        if not node_ref:
+            print >> sys.stderr, 'node_id %s is not found' % node_id
+            sys.exit(1)
+        if mac_address.lower() == node_ref['prov_mac_address'].lower():
+            print >> sys.stderr,\
+                     _('mac_address %s is already used as prov_mac_address')\
+                      % mac_address
+            sys.exit(1)
+
+        id = bmdb.bm_interface_create(
+                 ctx,
+                 bm_node_id=node_id,
+                 address=mac_address,
+                 datapath_id=datapath_id,
+                 port_no=port_no)
+        print id
+
+    @args('--id', dest='if_id', metavar='<id>',
+            help='ID of an interface')
+    def delete(self, if_id):
+        """Deletes bare-metal nodes' NICs"""
+        ctx = context.get_admin_context()
+        bmdb.bm_interface_destroy(ctx, if_id)
+
+    @args('--node_id', dest='node_id', metavar='<node_id>',
+            help='ID of a bare-metal node')
+    def list(self, node_id=None):
+        """Show a list of all NICs. Filter by node ID"""
+        fmt = "%-8s  %-16s  %-18s  %-16s  %-4s"
+        print fmt % (
+                    _('ID'),
+                    _('BM_NODE_ID'),
+                    _('MAC_ADDRESS'),
+                    _('DATAPATH_ID'),
+                    _('PORT_NO'))
+        ctx = context.get_admin_context()
+        if not node_id:
+            pifs = bmdb.bm_interface_get_all(ctx)
+        else:
+            pifs = bmdb.bm_interface_get_all_by_bm_node_id(ctx, node_id)
+        for pif in pifs:
+            print fmt % (pif['id'], pif['bm_node_id'],
+                         pif['address'], pif['datapath_id'], pif['port_no'])
+        print
+
+
+class BareMetalPxeIpCommands(object):
+    """Class for mangaging IPs in bare-metal PXE networks."""
+
+    @args('--cidr', dest='cidr_str', metavar='<cidr>',
+            help='Network CIDR')
+    def create(self, cidr_str):
+        """Creates IPs by range"""
+        ctx = context.get_admin_context()
+        cidr = netaddr.IPNetwork(cidr_str)
+        num_ips = len(cidr)
+        for index in range(1, num_ips - 1, 2):
+            address = str(cidr[index])
+            server_address = str(cidr[index + 1])
+            bmdb.bm_pxe_ip_create(ctx, address, server_address)
+
+    @args('--id', dest='ip_id', metavar='<id>',
+            help='ID of PXE IP address')
+    @args('--cidr', dest='cidr_str', metavar='<cidr>',
+            help='Network CIDR')
+    def delete(self, ip_id=None, cidr_str=None):
+        """Deletes IPs by range"""
+        if ip_id is None and cidr_str is None:
+            raise Exception("Please specify either ID or CIDR")
+        ctx = context.get_admin_context()
+        if ip_id is not None:
+            bmdb.bm_pxe_ip_destroy(ctx, ip_id)
+        else:
+            cidr = netaddr.IPNetwork(cidr_str)
+            num_ips = len(cidr)
+            for index in range(1, num_ips - 1, 2):
+                address = str(cidr[index])
+                bmdb.bm_pxe_ip_destroy_by_address(ctx, address)
+
+    def list(self):
+        """Show a list of all IPs"""
+        fmt = "%-8s  %-15s  %-15s  %-8s"
+        print fmt % (
+                    _('ID'),
+                    _('ADDRESS'),
+                    _('SERVER_ADDRESS'),
+                    _('BM_NODE_ID'))
+        ctxt = context.get_admin_context()
+        for ip in bmdb.bm_pxe_ip_get_all(ctxt):
+            print fmt % (ip['id'], ip['address'], ip['server_address'],
+                         ip['bm_node_id'])
+        print
+
+
 CATEGORIES = {
     'db': BareMetalDbCommands,
+    'node': BareMetalNodeCommands,
+    'interface': BareMetalInterfaceCommands,
+    'pxe_ip': BareMetalPxeIpCommands,
 }
 
 
